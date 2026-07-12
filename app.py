@@ -4,6 +4,9 @@ import yfinance as yf
 import os
 from streamlit_autorefresh import st_autorefresh
 
+EMAIL = st.secrets["EMAIL_ADDRESS"]
+PASSWORD = st.secrets["EMAIL_APP_PASSWORD"]
+
 # Visualization
 from src.visualization import (
     closing_chart,

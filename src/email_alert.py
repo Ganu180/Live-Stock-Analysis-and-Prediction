@@ -6,6 +6,8 @@ import pandas as pd
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+from app import EMAIL, PASSWORD
+
 # ==========================================================
 # PROJECT PATHS
 # ==========================================================
@@ -422,12 +424,12 @@ def check_alerts(
 
 def test_alert_system():
 
-    sender_email = "YOUR_GMAIL@gmail.com"
+    sender_email = EMAIL
 
-    app_password = "YOUR_APP_PASSWORD"
+    app_password = PASSWORD
 
     save_alert(
-        email="YOUR_RECEIVER@gmail.com",
+        email="gokhaleganesh67@gmail.com",
         ticker="HDFCBANK.NS",
         alert_type="Price Above",
         target_price=1900

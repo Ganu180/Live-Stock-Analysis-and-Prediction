@@ -1,10 +1,27 @@
 import requests
 import pandas as pd
 
+import streamlit as st
+
+NEWS_API_KEY = st.secrets["NEWS_API_KEY"]
+
+import os
+
+try:
+    NEWS_API_KEY = st.secrets["NEWS_API_KEY"]
+except Exception:
+    NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+
 # Replace with your own NewsAPI key
 API_KEY = "412a4d28d0264fb29bd86db6fc7cdadd"
 
 BASE_URL = "https://newsapi.org/v2/everything"
+
+import requests
+import streamlit as st
+
+# Read News API Key
+NEWS_API_KEY = st.secrets["NEWS_API_KEY"]
 
 
 def get_stock_news(company_name, page_size=10):
