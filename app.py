@@ -4,8 +4,8 @@ import yfinance as yf
 import os
 from streamlit_autorefresh import st_autorefresh
 
-EMAIL = st.secrets["EMAIL_ADDRESS"]
-PASSWORD = st.secrets["EMAIL_APP_PASSWORD"]
+EMAIL = st.secrets.get("EMAIL_ADDRESS", "")
+PASSWORD = st.secrets.get("EMAIL_APP_PASSWORD", "")
 
 # Visualization
 from src.visualization import (
@@ -1485,7 +1485,7 @@ check_alerts(
     current_price=current_price,
     signal=signal,
     sender_email=os.getenv("iamganeshgokhale180@gmail.com"),
-    app_password=os.getenv("cbxl cefy pmtc ybjr")
+    app_password=os.getenv("atbu eaoy powe wbzp")
 )            
 
 # ==========================================================
