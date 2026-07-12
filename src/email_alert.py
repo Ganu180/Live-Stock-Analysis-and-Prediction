@@ -6,7 +6,10 @@ import pandas as pd
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-from app import EMAIL, PASSWORD
+import streamlit as st
+
+EMAIL = st.secrets.get("EMAIL_ADDRESS", "")
+PASSWORD = st.secrets.get("EMAIL_APP_PASSWORD", "")
 
 # ==========================================================
 # PROJECT PATHS

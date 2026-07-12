@@ -1484,8 +1484,8 @@ check_alerts(
     ticker=ticker,
     current_price=current_price,
     signal=signal,
-    sender_email=os.getenv("iamganeshgokhale180@gmail.com"),
-    app_password=os.getenv("atbu eaoy powe wbzp")
+    sender_email=EMAIL,
+    app_password=PASSWORD
 )            
 
 # ==========================================================
