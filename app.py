@@ -129,14 +129,24 @@ refresh = st.sidebar.button("🔄 Refresh Data")
 # ---------------------------------------
 
 with st.spinner("Downloading stock data..."):
+    try:
+        df = yf.download(
+            ticker,
+            period=period,
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=False
+        )
 
-    df = yf.download(
-        ticker,
-        period=period,
-        interval="1d",
-        auto_adjust=True,
-        progress=False
-    )
+        if df is None or df.empty:
+            st.error(f"No data found for {ticker}")
+            st.stop()
+
+    except Exception as e:
+        st.error(f"Unable to download stock data.\n\n{e}")
+        st.stop()
+
 
 # ---------------------------------------
 # Fix MultiIndex
