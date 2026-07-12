@@ -2,148 +2,162 @@ import pandas as pd
 import ta
 
 
+import numpy as np
+import pandas as pd
+
+from ta.trend import (
+    SMAIndicator,
+    EMAIndicator,
+    MACD,
+    ADXIndicator
+)
+
+from ta.momentum import RSIIndicator
+
+from ta.volatility import BollingerBands
+
+
 def calculate_indicators(df):
-    """
-    Calculate all technical indicators required
-    for visualization and machine learning.
-    """
 
-    # Make a copy
-    df = df.copy()
+    # -----------------------------
+    # Empty dataframe check
+    # -----------------------------
+    if df is None or df.empty:
+        return df
 
-    # ----------------------------------------
-    # Handle MultiIndex columns from yfinance
-    # ----------------------------------------
+    # -----------------------------
+    # Handle yfinance MultiIndex
+    # -----------------------------
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
-    # ----------------------------------------
-    # Remove duplicate columns if any
-    # ----------------------------------------
-    df = df.loc[:, ~df.columns.duplicated()]
+    # -----------------------------
+    # Required columns check
+    # -----------------------------
+    required = ["Open", "High", "Low", "Close", "Volume"]
 
-    # ----------------------------------------
-    # Simple Moving Average
-    # ----------------------------------------
-    df["SMA20"] = df["Close"].rolling(window=20).mean()
-    df["SMA50"] = df["Close"].rolling(window=50).mean()
+    for col in required:
+        if col not in df.columns:
+            raise ValueError(f"Missing column: {col}")
 
-    # ----------------------------------------
-    # Exponential Moving Average
-    # ----------------------------------------
-    df["EMA20"] = ta.trend.EMAIndicator(
-        close=df["Close"],
-        window=20
-    ).ema_indicator()
+    # -----------------------------
+    # Convert numeric columns
+    # -----------------------------
+    for col in required:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # ----------------------------------------
-    # Relative Strength Index
-    # ----------------------------------------
-    df["RSI"] = ta.momentum.RSIIndicator(
-        close=df["Close"],
-        window=14
-    ).rsi()
+    df = df.dropna().copy()
 
-    # ----------------------------------------
+    # -----------------------------
+    # Not enough data
+    # -----------------------------
+    if len(df) < 30:
+
+        indicators = [
+            "SMA20",
+            "EMA20",
+            "RSI",
+            "MACD",
+            "MACD_SIGNAL",
+            "MACD_DIFF",
+            "BB_UPPER",
+            "BB_MIDDLE",
+            "BB_LOWER",
+            "ADX"
+        ]
+
+        for col in indicators:
+            df[col] = np.nan
+
+        return df
+
+    # -----------------------------
+    # SMA
+    # -----------------------------
+    try:
+        df["SMA20"] = SMAIndicator(
+            close=df["Close"],
+            window=20
+        ).sma_indicator()
+    except:
+        df["SMA20"] = np.nan
+
+    # -----------------------------
+    # EMA
+    # -----------------------------
+    try:
+        df["EMA20"] = EMAIndicator(
+            close=df["Close"],
+            window=20
+        ).ema_indicator()
+    except:
+        df["EMA20"] = np.nan
+
+    # -----------------------------
+    # RSI
+    # -----------------------------
+    try:
+        df["RSI"] = RSIIndicator(
+            close=df["Close"],
+            window=14
+        ).rsi()
+    except:
+        df["RSI"] = np.nan
+
+    # -----------------------------
     # MACD
-    # ----------------------------------------
-    macd = ta.trend.MACD(
-        close=df["Close"]
-    )
+    # -----------------------------
+    try:
 
-    df["MACD"] = macd.macd()
-    df["MACD_Signal"] = macd.macd_signal()
-    df["MACD_Histogram"] = macd.macd_diff()
+        macd = MACD(df["Close"])
 
-    # ----------------------------------------
+        df["MACD"] = macd.macd()
+        df["MACD_SIGNAL"] = macd.macd_signal()
+        df["MACD_DIFF"] = macd.macd_diff()
+
+    except:
+
+        df["MACD"] = np.nan
+        df["MACD_SIGNAL"] = np.nan
+        df["MACD_DIFF"] = np.nan
+
+    # -----------------------------
     # Bollinger Bands
-    # ----------------------------------------
-    bb = ta.volatility.BollingerBands(
-        close=df["Close"],
-        window=20,
-        window_dev=2
-    )
+    # -----------------------------
+    try:
 
-    df["BB_High"] = bb.bollinger_hband()
-    df["BB_Low"] = bb.bollinger_lband()
-    df["BB_Middle"] = bb.bollinger_mavg()
-    df["BB_Width"] = bb.bollinger_wband()
+        bb = BollingerBands(
+            close=df["Close"],
+            window=20,
+            window_dev=2
+        )
 
-    # ----------------------------------------
-    # Average True Range
-    # ----------------------------------------
-    atr = ta.volatility.AverageTrueRange(
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        window=14
-    )
+        df["BB_UPPER"] = bb.bollinger_hband()
+        df["BB_MIDDLE"] = bb.bollinger_mavg()
+        df["BB_LOWER"] = bb.bollinger_lband()
 
-    df["ATR"] = atr.average_true_range()
+    except:
 
-    # ----------------------------------------
-    # Stochastic Oscillator
-    # ----------------------------------------
-    stoch = ta.momentum.StochasticOscillator(
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        window=14,
-        smooth_window=3
-    )
+        df["BB_UPPER"] = np.nan
+        df["BB_MIDDLE"] = np.nan
+        df["BB_LOWER"] = np.nan
 
-    df["Stoch_K"] = stoch.stoch()
-    df["Stoch_D"] = stoch.stoch_signal()
+    # -----------------------------
+    # ADX
+    # -----------------------------
+    try:
 
-    # ----------------------------------------
-    # On Balance Volume
-    # ----------------------------------------
-    obv = ta.volume.OnBalanceVolumeIndicator(
-        close=df["Close"],
-        volume=df["Volume"]
-    )
+        adx = ADXIndicator(
+            high=df["High"],
+            low=df["Low"],
+            close=df["Close"],
+            window=14
+        )
 
-    df["OBV"] = obv.on_balance_volume()
+        df["ADX"] = adx.adx()
 
-    # ----------------------------------------
-    # Average Directional Index
-    # ----------------------------------------
-    adx = ta.trend.ADXIndicator(
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        window=14
-    )
+    except:
 
-    df["ADX"] = adx.adx()
-
-    # ----------------------------------------
-    # Commodity Channel Index
-    # ----------------------------------------
-    cci = ta.trend.CCIIndicator(
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        window=20
-    )
-
-    df["CCI"] = cci.cci()
-
-    # ----------------------------------------
-    # Williams %R
-    # ----------------------------------------
-    williams = ta.momentum.WilliamsRIndicator(
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        lbp=14
-    )
-
-    df["WilliamsR"] = williams.williams_r()
-
-    # ----------------------------------------
-    # Fill Missing Values
-    # ----------------------------------------
-    df = df.bfill()
+        df["ADX"] = np.nan
 
     return df

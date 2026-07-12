@@ -133,6 +133,7 @@ with st.spinner("Downloading stock data..."):
     df = yf.download(
         ticker,
         period=period,
+        interval="1d",
         auto_adjust=True,
         progress=False
     )
@@ -157,7 +158,10 @@ if df.empty:
 # Calculate Indicators
 # ---------------------------------------
 
-df = calculate_indicators(df)
+if len(df) >= 30:
+    df = calculate_indicators(df)
+else:
+    st.warning("Not enough historical data to calculate technical indicators.")
 
 # ---------------------------------------
 # Latest Values
