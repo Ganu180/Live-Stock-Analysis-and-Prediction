@@ -1317,7 +1317,7 @@ with tab6:
     fig = go.Figure(
         data=[
             go.Pie(
-                labels=portfolio["Ticker"],
+                labels=portfolio["Stock"],
                 values=portfolio["Current Value"],
                 hole=0.45
             )
