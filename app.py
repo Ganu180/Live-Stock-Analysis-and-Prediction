@@ -81,7 +81,7 @@ from src.email_alert import (
 )
 
 from src.utils import (
-    save_prediction,
+    save_prediction_history,
     load_prediction_history,
     format_currency,
     format_percentage
@@ -1036,7 +1036,7 @@ with tab3:
 
             try:
 
-                save_prediction(
+                save_prediction_history(
 
                     ticker=ticker,
 
