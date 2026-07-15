@@ -1,119 +1,173 @@
-import streamlit as st
-import pandas as pd
-import yfinance as yf
+# ==========================================================
+# LIVE STOCK ANALYSIS & PREDICTION
+# Author : Ganesh Gokhale
+# ==========================================================
+
+# -----------------------------
+# Standard Libraries
+# -----------------------------
 import os
-from streamlit_autorefresh import st_autorefresh
+import warnings
+from datetime import datetime
 
-EMAIL = st.secrets.get("EMAIL_ADDRESS", "")
-PASSWORD = st.secrets.get("EMAIL_APP_PASSWORD", "")
+# -----------------------------
+# Data Handling
+# -----------------------------
+import numpy as np
+import pandas as pd
 
+# -----------------------------
+# Streamlit
+# -----------------------------
+import streamlit as st
+
+# -----------------------------
 # Visualization
-from src.visualization import (
-    closing_chart,
-    candlestick_chart,
-    volume_chart,
-    moving_average_chart,
-    rsi_chart,
-    macd_chart,
-    bollinger_chart
-)
+# -----------------------------
+import plotly.graph_objects as go
 
-# Indicators
+# -----------------------------
+# Stock Data
+# -----------------------------
+import yfinance as yf
+
+# -----------------------------
+# Machine Learning
+# -----------------------------
+import joblib
+
+try:
+    import tensorflow as tf
+    load_model = tf.keras.models.load_model
+    TENSORFLOW_AVAILABLE = True
+except Exception:
+    TENSORFLOW_AVAILABLE = False
+
+# -----------------------------
+# Project Modules
+# -----------------------------
 from src.indicators import calculate_indicators
 
-# Prediction
-from src.prediction import predict_next_price
-
-# Company Information
-from src.company_info import (
-    get_company_info,
-    company_dataframe
+from src.visualization import (
+    create_candlestick_chart,
+    plot_rsi,
+    plot_macd,
+    plot_bollinger,
+    plot_volume
 )
 
-# News
+from src.company_info import get_company_information
+
 from src.news import get_stock_news
 
-# Portfolio
 from src.portfolio import (
+    load_portfolio,
     add_stock,
-    portfolio_summary,
-    initialize_portfolio
+    remove_stock,
+    calculate_portfolio
 )
 
-# Utilities
-from src.utils import (
-    current_date,
-    current_time,
-    generate_signal,
-    save_prediction_history,
-    load_prediction_history,
-    format_currency,
-    recommendation,
-    rsi_signal,
-    macd_signal,
-    moving_average_signal
-)
+from src.ai_recommendation import generate_recommendation
 
-# Email_alerts
+from src.pdf_report import create_pdf_report
+
 from src.email_alert import (
     save_alert,
     load_alerts,
     delete_alert,
+    check_alerts,
     validate_email,
-    get_alert_types,
-    check_alerts
+    get_alert_types
 )
 
+from src.utils import (
+    save_prediction,
+    load_prediction_history,
+    format_currency,
+    format_percentage
+)
 
-# ---------------------------------------
-# Page Configuration
-# ---------------------------------------
+warnings.filterwarnings("ignore")
+
+# ==========================================================
+# PAGE CONFIGURATION
+# ==========================================================
 
 st.set_page_config(
-    page_title="Live Stock Market Analysis & Prediction",
+    page_title="Live Stock Analysis & Prediction",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ---------------------------------------
-# Auto Refresh
-# ---------------------------------------
+# ==========================================================
+# STREAMLIT SECRETS
+# ==========================================================
 
-st_autorefresh(
-    interval=60000,
-    key="refresh"
+EMAIL = st.secrets.get("EMAIL_ADDRESS", "")
+PASSWORD = st.secrets.get("EMAIL_APP_PASSWORD", "")
+NEWS_API_KEY = st.secrets.get("NEWS_API_KEY", "")
+
+# ==========================================================
+# LOAD MODELS
+# ==========================================================
+
+rf_model = None
+lstm_model = None
+
+try:
+    rf_model = joblib.load("models/random_forest.pkl")
+except Exception:
+    pass
+
+if TENSORFLOW_AVAILABLE:
+
+    try:
+        lstm_model = load_model("models/lstm_model.keras")
+    except Exception:
+        lstm_model = None
+
+# ==========================================================
+# TITLE
+# ==========================================================
+
+st.title("📈 Live Stock Analysis & Prediction System")
+
+st.caption(
+    "Real-time Stock Analysis using Technical Indicators, "
+    "Machine Learning and Interactive Visualizations"
 )
 
-# ---------------------------------------
-# Title
-# ---------------------------------------
+st.divider()
 
-st.title("📈 Live Stock Market Analysis & Prediction")
+# ==========================================================
+# SIDEBAR
+# ==========================================================
 
-st.markdown(
-"""
-Analyze live market data using Machine Learning,
-technical indicators and interactive dashboards.
-"""
-)
+st.sidebar.title("⚙️ Settings")
 
-# ---------------------------------------
-# Sidebar
-# ---------------------------------------
+stock_list = [
+    "RELIANCE.NS",
+    "TCS.NS",
+    "INFY.NS",
+    "HDFCBANK.NS",
+    "ICICIBANK.NS",
+    "SBIN.NS",
+    "LT.NS",
+    "ITC.NS",
+    "AXISBANK.NS",
+    "BHARTIARTL.NS"
+]
 
-st.sidebar.title("⚙ Settings")
-
-ticker = st.sidebar.text_input(
-    "Stock Symbol",
-    value="HDFCBANK.NS"
+ticker = st.sidebar.selectbox(
+    "Select Stock",
+    stock_list,
+    index=3
 )
 
 period = st.sidebar.selectbox(
-    "Historical Data",
+    "Historical Period",
     [
-        "1mo",
-        "3mo",
         "6mo",
         "1y",
         "2y",
@@ -122,754 +176,905 @@ period = st.sidebar.selectbox(
     index=2
 )
 
-refresh = st.sidebar.button("🔄 Refresh Data")
+interval = st.sidebar.selectbox(
+    "Interval",
+    [
+        "1d",
+        "1wk",
+        "1mo"
+    ]
+)
 
-# ---------------------------------------
-# Download Data
-# ---------------------------------------
+auto_refresh = st.sidebar.checkbox(
+    "Auto Refresh (60 sec)",
+    value=False
+)
 
-with st.spinner("Downloading stock data..."):
+if auto_refresh:
+
+    from streamlit_autorefresh import st_autorefresh
+
+    st_autorefresh(
+        interval=60000,
+        key="stock_refresh"
+    )
+
+st.sidebar.divider()
+
+st.sidebar.markdown("### ℹ️ Selected Stock")
+
+st.sidebar.success(ticker)
+# ==========================================================
+# DOWNLOAD STOCK DATA
+# ==========================================================
+
+ticker = ticker.strip().upper()
+
+if ticker == "":
+    st.error("Please select a valid stock.")
+    st.stop()
+
+with st.spinner("Downloading latest stock data..."):
+
     try:
+
         df = yf.download(
-            ticker,
+            tickers=ticker,
             period=period,
-            interval="1d",
+            interval=interval,
             auto_adjust=True,
             progress=False,
             threads=False
         )
 
-        if df is None or df.empty:
-            st.error(f"No data found for {ticker}")
-            st.stop()
-
     except Exception as e:
+
         st.error(f"Unable to download stock data.\n\n{e}")
         st.stop()
 
+# ==========================================================
+# VALIDATE DATA
+# ==========================================================
 
-# ---------------------------------------
-# Fix MultiIndex
-# ---------------------------------------
+if df is None or df.empty:
+
+    st.error(f"No stock data found for **{ticker}**")
+    st.stop()
+
+# ==========================================================
+# HANDLE MULTIINDEX FROM YFINANCE
+# ==========================================================
 
 if isinstance(df.columns, pd.MultiIndex):
 
     df.columns = df.columns.get_level_values(0)
 
-df = df.loc[:, ~df.columns.duplicated()]
+# ==========================================================
+# ENSURE REQUIRED COLUMNS
+# ==========================================================
 
-if df.empty:
+required_columns = [
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Volume"
+]
 
-    st.error("Unable to download stock data.")
+missing = [
+    col for col in required_columns
+    if col not in df.columns
+]
+
+if missing:
+
+    st.error(
+        f"Missing required columns:\n\n{missing}"
+    )
 
     st.stop()
 
-# ---------------------------------------
-# Calculate Indicators
-# ---------------------------------------
+# ==========================================================
+# CONVERT TO NUMERIC
+# ==========================================================
 
-if len(df) >= 30:
+for col in required_columns:
+
+    df[col] = pd.to_numeric(
+        df[col],
+        errors="coerce"
+    )
+
+df = df.dropna()
+
+if df.empty:
+
+    st.error("No usable data after cleaning.")
+    st.stop()
+
+# ==========================================================
+# CALCULATE TECHNICAL INDICATORS
+# ==========================================================
+
+try:
+
     df = calculate_indicators(df)
-else:
-    st.warning("Not enough historical data to calculate technical indicators.")
 
-# ---------------------------------------
-# Latest Values
-# ---------------------------------------
+except Exception as e:
+
+    st.warning(
+        f"Unable to calculate some indicators.\n\n{e}"
+    )
+
+# ==========================================================
+# LATEST DATA
+# ==========================================================
 
 latest = df.iloc[-1]
 
 current_price = float(latest["Close"])
 
-high_price = float(latest["High"])
+previous_close = float(df["Close"].iloc[-2]) if len(df) > 1 else current_price
 
-low_price = float(latest["Low"])
+price_change = current_price - previous_close
 
-volume = int(latest["Volume"])
+price_change_percent = (
+    (price_change / previous_close) * 100
+    if previous_close != 0
+    else 0
+)
 
-# ---------------------------------------
-# Tabs
-# ---------------------------------------
+# ==========================================================
+# SAFE VALUE FUNCTION
+# Prevents KeyError
+# ==========================================================
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+def safe_value(column):
+
+    if column not in df.columns:
+        return None
+
+    value = latest[column]
+
+    if pd.isna(value):
+        return None
+
+    return float(value)
+
+# ==========================================================
+# INDICATOR VALUES
+# ==========================================================
+
+sma20 = safe_value("SMA20")
+sma50 = safe_value("SMA50")
+ema20 = safe_value("EMA20")
+rsi = safe_value("RSI")
+
+macd = safe_value("MACD")
+macd_signal = safe_value("MACD_SIGNAL")
+
+adx = safe_value("ADX")
+
+bb_upper = safe_value("BB_UPPER")
+bb_middle = safe_value("BB_MIDDLE")
+bb_lower = safe_value("BB_LOWER")
+
+# ==========================================================
+# PRICE SIGNAL
+# ==========================================================
+
+if sma20 is not None and ema20 is not None:
+
+    if current_price > sma20 and current_price > ema20:
+
+        trend = "Bullish 📈"
+
+    elif current_price < sma20 and current_price < ema20:
+
+        trend = "Bearish 📉"
+
+    else:
+
+        trend = "Sideways ➖"
+
+else:
+
+    trend = "Not Available"
+
+# ==========================================================
+# COMPANY INFORMATION
+# ==========================================================
+
+try:
+
+    company = get_company_information(ticker)
+
+except Exception:
+
+    company = {}
+
+# ==========================================================
+# NEWS
+# ==========================================================
+
+try:
+
+    news = get_stock_news(
+        ticker.replace(".NS", "")
+    )
+
+except Exception:
+
+    news = []
+
+# ==========================================================
+# CREATE TABS
+# ==========================================================
+
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
     [
-        "📊 Overview",
-        "📈 Indicators",
+        "📊 Dashboard",
+        "📈 Charts",
         "🤖 Prediction",
         "🏢 Company",
         "📰 News",
         "💼 Portfolio",
-        "📧 Email Alerts"
+        "📧 Alerts",
+        "🧠 AI Recommendation",
+        "📄 PDF Report",
+        "📊 History"
     ]
 )
 # ==========================================================
-# TAB 1 : OVERVIEW
+# TAB 1 : DASHBOARD
 # ==========================================================
 
 with tab1:
 
-    st.header("📊 Live Market Overview")
-
-    st.success(f"Showing live data for **{ticker}**")
-
-    # ----------------------------------------------------
-    # KPI Cards
-    # ----------------------------------------------------
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric(
-        "Current Price",
-        f"₹ {current_price:.2f}"
-    )
-
-    col2.metric(
-        "Today's High",
-        f"₹ {high_price:.2f}"
-    )
-
-    col3.metric(
-        "Today's Low",
-        f"₹ {low_price:.2f}"
-    )
-
-    col4.metric(
-        "Volume",
-        f"{volume:,}"
-    )
+    st.header("📊 Stock Dashboard")
 
     st.divider()
 
-    # ----------------------------------------------------
-    # Historical Data
-    # ----------------------------------------------------
-
-    st.subheader("Recent Historical Data")
-
-    st.dataframe(
-        df.tail(10),
-        use_container_width=True
-    )
-
-    st.divider()
-
-    # ----------------------------------------------------
-    # Closing Price Chart
-    # ----------------------------------------------------
-
-    st.subheader("📈 Closing Price")
-
-    try:
-
-        fig = closing_chart(df)
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    except Exception as e:
-
-        st.error(e)
-
-    st.divider()
-
-    # ----------------------------------------------------
-    # Candlestick Chart
-    # ----------------------------------------------------
-
-    st.subheader("🕯 Candlestick Chart")
-
-    try:
-
-        fig = candlestick_chart(df)
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    except Exception as e:
-
-        st.error(e)
-
-    st.divider()
-
-    # ----------------------------------------------------
-    # Volume Chart
-    # ----------------------------------------------------
-
-    st.subheader("📊 Trading Volume")
-
-    try:
-
-        fig = volume_chart(df)
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    except Exception as e:
-
-        st.error(e)
-
-    st.divider()
-
-    # ----------------------------------------------------
-    # Moving Average
-    # ----------------------------------------------------
-
-    st.subheader("📉 Moving Average")
-
-    try:
-
-        fig = moving_average_chart(df)
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    except Exception as e:
-
-        st.error(e)
-
-    st.divider()
-
-    # ----------------------------------------------------
-    # Latest Indicator Values
-    # ----------------------------------------------------
-
-    st.subheader("Latest Technical Indicators")
+    # ======================================================
+    # PRICE METRICS
+    # ======================================================
 
     c1, c2, c3, c4 = st.columns(4)
 
     c1.metric(
-        "SMA20",
-        f"{latest['SMA20']:.2f}"
+        "Current Price",
+        f"₹{current_price:.2f}",
+        f"{price_change:.2f}"
     )
 
     c2.metric(
-        "SMA50",
-        f"{latest['SMA50']:.2f}"
+        "Change %",
+        f"{price_change_percent:.2f}%"
     )
 
     c3.metric(
-        "EMA20",
-        f"{latest['EMA20']:.2f}"
+        "Trend",
+        trend
     )
 
     c4.metric(
-        "RSI",
-        f"{latest['RSI']:.2f}"
-    )
-
-    c5, c6, c7 = st.columns(3)
-
-    c5.metric(
-        "MACD",
-        f"{latest['MACD']:.2f}"
-    )
-
-    c6.metric(
-        "Signal",
-        f"{latest['MACD_Signal']:.2f}"
-    )
-
-    c7.metric(
-        "ATR",
-        f"{latest['ATR']:.2f}"
+        "Volume",
+        f"{int(latest['Volume']):,}"
     )
 
     st.divider()
 
-    # ----------------------------------------------------
-    # Summary
-    # ----------------------------------------------------
+    # ======================================================
+    # TECHNICAL INDICATORS
+    # ======================================================
 
-    st.subheader("Market Summary")
+    st.subheader("Technical Indicators")
 
-    st.write(f"**Current Closing Price:** ₹ {current_price:.2f}")
+    i1, i2, i3, i4 = st.columns(4)
 
-    st.write(f"**Highest Price Today:** ₹ {high_price:.2f}")
+    i1.metric(
+        "SMA 20",
+        f"{sma20:.2f}" if sma20 is not None else "N/A"
+    )
 
-    st.write(f"**Lowest Price Today:** ₹ {low_price:.2f}")
+    i2.metric(
+        "EMA 20",
+        f"{ema20:.2f}" if ema20 is not None else "N/A"
+    )
 
-    st.write(f"**Trading Volume:** {volume:,}")
+    i3.metric(
+        "RSI",
+        f"{rsi:.2f}" if rsi is not None else "N/A"
+    )
 
-    st.write(f"**Historical Records:** {len(df)}")
-    # ==========================================================
-# TAB 2 : TECHNICAL INDICATORS
+    i4.metric(
+        "ADX",
+        f"{adx:.2f}" if adx is not None else "N/A"
+    )
+
+    st.divider()
+
+    # ======================================================
+    # MACD
+    # ======================================================
+
+    m1, m2 = st.columns(2)
+
+    m1.metric(
+        "MACD",
+        f"{macd:.2f}" if macd is not None else "N/A"
+    )
+
+    m2.metric(
+        "Signal Line",
+        f"{macd_signal:.2f}" if macd_signal is not None else "N/A"
+    )
+
+    st.divider()
+
+    # ======================================================
+    # BOLLINGER BANDS
+    # ======================================================
+
+    st.subheader("Bollinger Bands")
+
+    b1, b2, b3 = st.columns(3)
+
+    b1.metric(
+        "Upper Band",
+        f"{bb_upper:.2f}" if bb_upper is not None else "N/A"
+    )
+
+    b2.metric(
+        "Middle Band",
+        f"{bb_middle:.2f}" if bb_middle is not None else "N/A"
+    )
+
+    b3.metric(
+        "Lower Band",
+        f"{bb_lower:.2f}" if bb_lower is not None else "N/A"
+    )
+
+    st.divider()
+
+    # ======================================================
+    # PRICE SUMMARY
+    # ======================================================
+
+    st.subheader("Today's Summary")
+
+    summary = pd.DataFrame({
+
+        "Metric": [
+
+            "Open",
+
+            "High",
+
+            "Low",
+
+            "Close",
+
+            "Volume"
+
+        ],
+
+        "Value": [
+
+            f"₹{latest['Open']:.2f}",
+
+            f"₹{latest['High']:.2f}",
+
+            f"₹{latest['Low']:.2f}",
+
+            f"₹{latest['Close']:.2f}",
+
+            f"{int(latest['Volume']):,}"
+
+        ]
+
+    })
+
+    st.dataframe(
+
+        summary,
+
+        use_container_width=True,
+
+        hide_index=True
+
+    )
+
+    st.divider()
+
+    # ======================================================
+    # COMPANY INFORMATION
+    # ======================================================
+
+    st.subheader("Company Information")
+
+    if company:
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+
+            st.write("**Company** :", company.get("company_name", "N/A"))
+
+            st.write("**Sector** :", company.get("sector", "N/A"))
+
+            st.write("**Industry** :", company.get("industry", "N/A"))
+
+            st.write("**Employees** :", company.get("employees", "N/A"))
+
+        with c2:
+
+            st.write("**Market Cap** :", company.get("market_cap", "N/A"))
+
+            st.write("**P/E Ratio** :", company.get("pe_ratio", "N/A"))
+
+            st.write("**Dividend Yield** :", company.get("dividend_yield", "N/A"))
+
+            st.write("**52 Week Range** :", company.get("week_range", "N/A"))
+
+    else:
+
+        st.info("Company information is not available.")
+# ==========================================================
+# TAB 2 : CHARTS
 # ==========================================================
 
 with tab2:
 
-    st.header("📈 Technical Indicators Dashboard")
-
-    st.write(
-        "Analyze the stock using technical indicators such as RSI, MACD, "
-        "Bollinger Bands and Moving Averages."
-    )
-
-    # -----------------------------------------------------
-    # RSI Chart
-    # -----------------------------------------------------
-
-    st.subheader("📊 Relative Strength Index (RSI)")
-
-    try:
-
-        fig = rsi_chart(df)
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    except Exception as e:
-
-        st.error(e)
+    st.header("📈 Interactive Charts")
 
     st.divider()
 
-    # -----------------------------------------------------
-    # MACD Chart
-    # -----------------------------------------------------
+    # ------------------------------------------------------
+    # Chart Selection
+    # ------------------------------------------------------
 
-    st.subheader("📈 MACD")
-
-    try:
-
-        fig = macd_chart(df)
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    except Exception as e:
-
-        st.error(e)
-
-    st.divider()
-
-    # -----------------------------------------------------
-    # Bollinger Bands
-    # -----------------------------------------------------
-
-    st.subheader("📉 Bollinger Bands")
-
-    try:
-
-        fig = bollinger_chart(df)
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    except Exception as e:
-
-        st.error(e)
-
-    st.divider()
-
-    # -----------------------------------------------------
-    # Indicator Values
-    # -----------------------------------------------------
-
-    st.subheader("Latest Indicator Values")
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric(
-        "RSI",
-        f"{latest['RSI']:.2f}"
-    )
-
-    c2.metric(
-        "MACD",
-        f"{latest['MACD']:.2f}"
-    )
-
-    c3.metric(
-        "MACD Signal",
-        f"{latest['MACD_Signal']:.2f}"
-    )
-
-    c4, c5, c6 = st.columns(3)
-
-    c4.metric(
-        "Upper Band",
-        f"{latest['BB_High']:.2f}"
-    )
-
-    c5.metric(
-        "Middle Band",
-        f"{latest['BB_Middle']:.2f}"
-    )
-
-    c6.metric(
-        "Lower Band",
-        f"{latest['BB_Low']:.2f}"
+    chart_option = st.selectbox(
+        "Select Chart",
+        [
+            "Candlestick",
+            "Volume",
+            "RSI",
+            "MACD",
+            "Bollinger Bands"
+        ]
     )
 
     st.divider()
 
-    # -----------------------------------------------------
-    # Indicator Status
-    # -----------------------------------------------------
+    # ------------------------------------------------------
+    # Candlestick Chart
+    # ------------------------------------------------------
 
-    st.subheader("Indicator Analysis")
+    if chart_option == "Candlestick":
 
-    rsi_status = rsi_signal(
-        latest["RSI"]
-    )
-
-    macd_status = macd_signal(
-        latest["MACD"],
-        latest["MACD_Signal"]
-    )
-
-    ma_status = moving_average_signal(
-        latest["SMA20"],
-        latest["SMA50"]
-    )
-
-    col1, col2, col3 = st.columns(3)
-
-    if rsi_status == "Oversold":
-        col1.success(f"RSI : {rsi_status}")
-
-    elif rsi_status == "Overbought":
-        col1.error(f"RSI : {rsi_status}")
-
-    else:
-        col1.info(f"RSI : {rsi_status}")
-
-    if macd_status == "Bullish":
-        col2.success(f"MACD : {macd_status}")
-
-    else:
-        col2.error(f"MACD : {macd_status}")
-
-    if ma_status == "Bullish":
-        col3.success(f"Moving Average : {ma_status}")
-
-    else:
-        col3.error(f"Moving Average : {ma_status}")
-
-    st.divider()
-
-    # -----------------------------------------------------
-    # Interpretation
-    # -----------------------------------------------------
-
-    st.subheader("Technical Interpretation")
-
-    if latest["RSI"] > 70:
-
-        st.warning(
-            "RSI is above 70. "
-            "The stock may be overbought."
-        )
-
-    elif latest["RSI"] < 30:
-
-        st.success(
-            "RSI is below 30. "
-            "The stock may be oversold."
-        )
-
-    else:
-
-        st.info(
-            "RSI is in the normal trading range."
-        )
-
-    if latest["MACD"] > latest["MACD_Signal"]:
-
-        st.success(
-            "MACD is above the Signal Line. "
-            "Bullish momentum detected."
-        )
-
-    else:
-
-        st.warning(
-            "MACD is below the Signal Line. "
-            "Bearish momentum detected."
-        )
-
-    if latest["Close"] > latest["BB_High"]:
-
-        st.warning(
-            "Price is trading above the Upper Bollinger Band."
-        )
-
-    elif latest["Close"] < latest["BB_Low"]:
-
-        st.success(
-            "Price is trading below the Lower Bollinger Band."
-        )
-
-    else:
-
-        st.info(
-            "Price is trading within the Bollinger Bands."
-        )
-
-    st.divider()
-
-    # -----------------------------------------------------
-    # Overall Recommendation
-    # -----------------------------------------------------
-
-    st.subheader("Overall Technical Recommendation")
-
-    tech_recommendation = recommendation(
-        "HOLD",
-        rsi_status,
-        macd_status,
-        ma_status
-    )
-
-    if tech_recommendation == "STRONG BUY":
-
-        st.success("🟢 STRONG BUY")
-
-    elif tech_recommendation == "BUY":
-
-        st.success("🟢 BUY")
-
-    elif tech_recommendation == "HOLD":
-
-        st.warning("🟡 HOLD")
-
-    elif tech_recommendation == "SELL":
-
-        st.error("🔴 SELL")
-
-    else:
-
-        st.error("🔴 STRONG SELL")
-# ==========================================================
-# TAB 3 : PREDICTION
-# ==========================================================
-
-with tab3:
-
-    st.header("🤖 Stock Price Prediction")
-
-    st.write(
-        "Predict tomorrow's closing price using the trained Machine Learning model."
-    )
-
-    st.divider()
-
-    # --------------------------------------------
-    # Current Market Information
-    # --------------------------------------------
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric(
-        "Current Price",
-        f"₹ {current_price:.2f}"
-    )
-
-    c2.metric(
-        "Today's High",
-        f"₹ {high_price:.2f}"
-    )
-
-    c3.metric(
-        "Today's Low",
-        f"₹ {low_price:.2f}"
-    )
-
-    c4.metric(
-        "Volume",
-        f"{volume:,}"
-    )
-
-    st.divider()
-
-    predict_button = st.button(
-        "🚀 Predict Tomorrow Price",
-        use_container_width=True
-    )
-
-    if predict_button:
+        st.subheader("Candlestick Chart")
 
         try:
 
-            # -----------------------------------------
-            # Random Forest Prediction
-            # -----------------------------------------
+            fig = create_candlestick_chart(df)
 
-            predicted_price = predict_next_price(df)
-
-            predicted_price = float(predicted_price)
-
-            difference = predicted_price - current_price
-
-            expected_return = (
-                difference / current_price
-            ) * 100
-
-            signal, percentage = generate_signal(
-                current_price,
-                predicted_price
-            )
-
-            save_prediction_history(
-                ticker,
-                current_price,
-                predicted_price,
-                signal
-            )
-
-            st.success("Prediction Completed Successfully!")
-
-            st.divider()
-
-            # -----------------------------------------
-            # Prediction Metrics
-            # -----------------------------------------
-
-            p1, p2, p3, p4 = st.columns(4)
-
-            p1.metric(
-                "Current Price",
-                f"₹ {current_price:.2f}"
-            )
-
-            p2.metric(
-                "Predicted Price",
-                f"₹ {predicted_price:.2f}"
-            )
-
-            p3.metric(
-                "Price Difference",
-                f"₹ {difference:.2f}"
-            )
-
-            p4.metric(
-                "Expected Return",
-                f"{expected_return:.2f}%"
-            )
-
-            st.divider()
-
-            # -----------------------------------------
-            # Recommendation
-            # -----------------------------------------
-
-            st.subheader("Recommendation")
-
-            if signal == "BUY":
-
-                st.success(
-                    "🟢 BUY\n\n"
-                    "The model predicts an upward movement."
-                )
-
-            elif signal == "SELL":
-
-                st.error(
-                    "🔴 SELL\n\n"
-                    "The model predicts a downward movement."
-                )
-
-            else:
-
-                st.warning(
-                    "🟡 HOLD\n\n"
-                    "The predicted movement is very small."
-                )
-
-            st.divider()
-
-            # -----------------------------------------
-            # Prediction Comparison
-            # -----------------------------------------
-
-            comparison = pd.DataFrame({
-
-                "Category": [
-                    "Current Price",
-                    "Predicted Price"
-                ],
-
-                "Price": [
-                    current_price,
-                    predicted_price
-                ]
-
-            })
-
-            st.subheader("Prediction Comparison")
-
-            st.bar_chart(
-                comparison.set_index("Category")
-            )
-
-            st.divider()
-
-            # -----------------------------------------
-            # Technical Summary
-            # -----------------------------------------
-
-            st.subheader("Technical Summary")
-
-            st.write(f"**RSI:** {latest['RSI']:.2f}")
-
-            st.write(f"**MACD:** {latest['MACD']:.2f}")
-
-            st.write(f"**MACD Signal:** {latest['MACD_Signal']:.2f}")
-
-            st.write(f"**SMA20:** {latest['SMA20']:.2f}")
-
-            st.write(f"**SMA50:** {latest['SMA50']:.2f}")
-
-            st.write(f"**ATR:** {latest['ATR']:.2f}")
-
-            st.divider()
-
-            # -----------------------------------------
-            # Prediction Details
-            # -----------------------------------------
-
-            st.subheader("Prediction Details")
-
-            st.info(
-                f"""
-Stock : {ticker}
-
-Current Price : ₹ {current_price:.2f}
-
-Predicted Tomorrow Price : ₹ {predicted_price:.2f}
-
-Expected Return : {expected_return:.2f} %
-
-Signal : {signal}
-"""
+            st.plotly_chart(
+                fig,
+                use_container_width=True
             )
 
         except Exception as e:
 
-            st.error(
-                f"Prediction Error : {e}"
+            st.error(f"Unable to create chart.\n{e}")
+
+    # ------------------------------------------------------
+    # Volume Chart
+    # ------------------------------------------------------
+
+    elif chart_option == "Volume":
+
+        st.subheader("Volume Chart")
+
+        try:
+
+            fig = plot_volume(df)
+
+            st.plotly_chart(
+                fig,
+                use_container_width=True
             )
 
-    else:
+        except Exception as e:
 
-        st.info(
-            "Click the button above to generate a prediction."
+            st.error(e)
+
+    # ------------------------------------------------------
+    # RSI Chart
+    # ------------------------------------------------------
+
+    elif chart_option == "RSI":
+
+        st.subheader("Relative Strength Index")
+
+        if "RSI" in df.columns:
+
+            try:
+
+                fig = plot_rsi(df)
+
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True
+                )
+
+            except Exception as e:
+
+                st.error(e)
+
+        else:
+
+            st.warning("RSI not available.")
+
+    # ------------------------------------------------------
+    # MACD Chart
+    # ------------------------------------------------------
+
+    elif chart_option == "MACD":
+
+        st.subheader("MACD")
+
+        if (
+            "MACD" in df.columns
+            and
+            "MACD_SIGNAL" in df.columns
+        ):
+
+            try:
+
+                fig = plot_macd(df)
+
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True
+                )
+
+            except Exception as e:
+
+                st.error(e)
+
+        else:
+
+            st.warning("MACD not available.")
+
+    # ------------------------------------------------------
+    # Bollinger Bands
+    # ------------------------------------------------------
+
+    elif chart_option == "Bollinger Bands":
+
+        st.subheader("Bollinger Bands")
+
+        if (
+            "BB_UPPER" in df.columns
+            and
+            "BB_LOWER" in df.columns
+        ):
+
+            try:
+
+                fig = plot_bollinger(df)
+
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True
+                )
+
+            except Exception as e:
+
+                st.error(e)
+
+        else:
+
+            st.warning("Bollinger Bands not available.")
+
+    st.divider()
+
+    # ------------------------------------------------------
+    # Latest Technical Indicator Values
+    # ------------------------------------------------------
+
+    st.subheader("Latest Indicator Values")
+
+    indicator_df = pd.DataFrame({
+
+        "Indicator":[
+            "SMA20",
+            "EMA20",
+            "RSI",
+            "MACD",
+            "MACD Signal",
+            "ADX"
+        ],
+
+        "Value":[
+
+            sma20,
+
+            ema20,
+
+            rsi,
+
+            macd,
+
+            macd_signal,
+
+            adx
+
+        ]
+
+    })
+
+    st.dataframe(
+
+        indicator_df,
+
+        use_container_width=True,
+
+        hide_index=True
+
+    )
+
+    st.divider()
+
+    # ------------------------------------------------------
+    # Download Historical Data
+    # ------------------------------------------------------
+
+    csv = df.to_csv().encode("utf-8")
+
+    st.download_button(
+
+        "⬇ Download Historical Data",
+
+        data=csv,
+
+        file_name=f"{ticker}_history.csv",
+
+        mime="text/csv"
+
+    )
+# ==========================================================
+# TAB 3 : STOCK PREDICTION
+# ==========================================================
+
+with tab3:
+
+    st.header("🤖 AI Stock Price Prediction")
+
+    st.divider()
+
+    st.write(
+        "Predict the next closing price using trained Machine Learning models."
+    )
+
+    st.divider()
+
+    # ------------------------------------------------------
+    # Prepare Input Features
+    # ------------------------------------------------------
+
+    feature_names = [
+        "Open",
+        "High",
+        "Low",
+        "Volume",
+        "SMA20",
+        "EMA20",
+        "RSI",
+        "MACD",
+        "ADX"
+    ]
+
+    features = {}
+
+    for feature in feature_names:
+
+        if feature in df.columns:
+
+            value = latest.get(feature)
+
+            if pd.isna(value):
+
+                value = 0
+
+        else:
+
+            value = 0
+
+        features[feature] = float(value)
+
+    input_df = pd.DataFrame([features])
+
+    st.subheader("Input Features")
+
+    st.dataframe(
+        input_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.divider()
+
+    # ------------------------------------------------------
+    # Prediction Button
+    # ------------------------------------------------------
+
+    predict_btn = st.button(
+        "🚀 Predict Next Closing Price",
+        use_container_width=True
+    )
+
+    predicted_price = None
+    lstm_prediction = None
+
+    if predict_btn:
+
+        # ==============================================
+        # RANDOM FOREST
+        # ==============================================
+
+        if rf_model is not None:
+
+            try:
+
+                predicted_price = float(
+                    rf_model.predict(input_df)[0]
+                )
+
+            except Exception as e:
+
+                st.error(f"Random Forest Error\n\n{e}")
+
+        else:
+
+            st.warning("Random Forest model not found.")
+
+        # ==============================================
+        # LSTM
+        # ==============================================
+
+        if lstm_model is not None:
+
+            try:
+
+                close_prices = df["Close"].tail(60).values
+
+                if len(close_prices) == 60:
+
+                    x = close_prices.reshape(1, 60, 1)
+
+                    lstm_prediction = float(
+                        lstm_model.predict(
+                            x,
+                            verbose=0
+                        )[0][0]
+                    )
+
+            except Exception as e:
+
+                st.warning(f"LSTM Error\n\n{e}")
+
+        st.divider()
+
+        # ==============================================
+        # DISPLAY PREDICTIONS
+        # ==============================================
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "Current Price",
+            f"₹{current_price:.2f}"
         )
-from src.company_info import get_company_info, company_dataframe
+
+        if predicted_price is not None:
+
+            col2.metric(
+                "Random Forest",
+                f"₹{predicted_price:.2f}",
+                f"{predicted_price-current_price:.2f}"
+            )
+
+        if lstm_prediction is not None:
+
+            col3.metric(
+                "LSTM",
+                f"₹{lstm_prediction:.2f}",
+                f"{lstm_prediction-current_price:.2f}"
+            )
+
+        st.divider()
+
+        # ==============================================
+        # BUY / SELL / HOLD SIGNAL
+        # ==============================================
+
+        if predicted_price is not None:
+
+            if predicted_price > current_price:
+
+                signal = "BUY"
+
+                st.success("🟢 BUY Signal")
+
+            elif predicted_price < current_price:
+
+                signal = "SELL"
+
+                st.error("🔴 SELL Signal")
+
+            else:
+
+                signal = "HOLD"
+
+                st.info("🟡 HOLD Signal")
+
+            confidence = (
+                abs(predicted_price-current_price)
+                / current_price
+            ) * 100
+
+            st.metric(
+                "Prediction Confidence",
+                f"{confidence:.2f}%"
+            )
+
+            # ======================================
+            # SAVE PREDICTION HISTORY
+            # ======================================
+
+            try:
+
+                save_prediction(
+
+                    ticker=ticker,
+
+                    current_price=current_price,
+
+                    predicted_price=predicted_price,
+
+                    signal=signal
+
+                )
+
+            except Exception:
+
+                pass
+
+        st.divider()
+
+        # ==============================================
+        # EMAIL ALERT CHECK
+        # ==============================================
+
+        try:
+
+            check_alerts(
+
+                ticker=ticker,
+
+                current_price=current_price,
+
+                predicted_price=predicted_price,
+
+                signal=signal
+
+            )
+
+        except Exception:
+
+            pass            
 # ==========================================================
 # TAB 4 : COMPANY INFORMATION
 # ==========================================================
@@ -878,560 +1083,342 @@ with tab4:
 
     st.header("🏢 Company Information")
 
+    st.divider()
+
     try:
 
-        company = get_company_info(ticker)
+        info = get_company_information(ticker)
 
-        # --------------------------------------------------
-        # Error Check
-        # --------------------------------------------------
+        if info:
 
-        if "Error" in company:
+            col1, col2 = st.columns(2)
 
-            st.error(company["Error"])
-
-        else:
-
-            st.success(
-                f"Company Profile : {company['Company Name']}"
-            )
-
-            st.divider()
-
-            # --------------------------------------------------
-            # Basic Information
-            # --------------------------------------------------
-
-            c1, c2 = st.columns(2)
-
-            with c1:
+            with col1:
 
                 st.subheader("Basic Details")
 
-                st.write(
-                    "**Company Name:**",
-                    company["Company Name"]
-                )
+                st.write("**Company Name:**", info.get("company_name", "N/A"))
+                st.write("**Sector:**", info.get("sector", "N/A"))
+                st.write("**Industry:**", info.get("industry", "N/A"))
+                st.write("**Country:**", info.get("country", "N/A"))
+                st.write("**Website:**", info.get("website", "N/A"))
 
-                st.write(
-                    "**Stock Symbol:**",
-                    company["Symbol"]
-                )
+            with col2:
 
-                st.write(
-                    "**Sector:**",
-                    company["Sector"]
-                )
+                st.subheader("Market Statistics")
 
-                st.write(
-                    "**Industry:**",
-                    company["Industry"]
-                )
-
-                st.write(
-                    "**Country:**",
-                    company["Country"]
-                )
-
-                st.write(
-                    "**City:**",
-                    company["City"]
-                )
-
-            with c2:
-
-                st.subheader("Trading Details")
-
-                st.write(
-                    "**Current Price:**",
-                    company["Current Price"]
-                )
-
-                st.write(
-                    "**Previous Close:**",
-                    company["Previous Close"]
-                )
-
-                st.write(
-                    "**Open:**",
-                    company["Open"]
-                )
-
-                st.write(
-                    "**Day High:**",
-                    company["Day High"]
-                )
-
-                st.write(
-                    "**Day Low:**",
-                    company["Day Low"]
-                )
+                st.write("**Market Cap:**", info.get("market_cap", "N/A"))
+                st.write("**P/E Ratio:**", info.get("pe_ratio", "N/A"))
+                st.write("**EPS:**", info.get("eps", "N/A"))
+                st.write("**Dividend Yield:**", info.get("dividend_yield", "N/A"))
+                st.write("**52 Week High:**", info.get("high_52week", "N/A"))
+                st.write("**52 Week Low:**", info.get("low_52week", "N/A"))
 
             st.divider()
-
-            # --------------------------------------------------
-            # Financial Metrics
-            # --------------------------------------------------
-
-            st.subheader("Financial Metrics")
-
-            m1, m2, m3 = st.columns(3)
-
-            m1.metric(
-                "Market Cap",
-                company["Market Cap"]
-            )
-
-            m2.metric(
-                "P/E Ratio",
-                company["P/E Ratio"]
-            )
-
-            m3.metric(
-                "EPS",
-                company["EPS"]
-            )
-
-            m4, m5, m6 = st.columns(3)
-
-            m4.metric(
-                "Dividend Yield",
-                company["Dividend Yield"]
-            )
-
-            m5.metric(
-                "Dividend Rate",
-                company["Dividend Rate"]
-            )
-
-            m6.metric(
-                "Beta",
-                company["Beta"]
-            )
-
-            st.divider()
-
-            # --------------------------------------------------
-            # 52 Week Statistics
-            # --------------------------------------------------
-
-            st.subheader("52 Week Statistics")
-
-            w1, w2 = st.columns(2)
-
-            w1.metric(
-                "52 Week High",
-                company["52 Week High"]
-            )
-
-            w2.metric(
-                "52 Week Low",
-                company["52 Week Low"]
-            )
-
-            st.divider()
-
-            # --------------------------------------------------
-            # Volume Information
-            # --------------------------------------------------
-
-            st.subheader("Volume")
-
-            v1, v2 = st.columns(2)
-
-            v1.metric(
-                "Today's Volume",
-                company["Volume"]
-            )
-
-            v2.metric(
-                "Average Volume",
-                company["Average Volume"]
-            )
-
-            st.divider()
-
-            # --------------------------------------------------
-            # Employees
-            # --------------------------------------------------
-
-            st.subheader("Organization")
-
-            o1, o2 = st.columns(2)
-
-            o1.metric(
-                "Employees",
-                company["Employees"]
-            )
-
-            o2.metric(
-                "Currency",
-                company["Currency"]
-            )
-
-            st.write(
-                "**Exchange:**",
-                company["Exchange"]
-            )
-
-            st.write(
-                "**Website:**",
-                company["Website"]
-            )
-
-            st.divider()
-
-            # --------------------------------------------------
-            # Company Summary
-            # --------------------------------------------------
 
             st.subheader("Business Summary")
 
             st.write(
-                company["Business Summary"]
+                info.get(
+                    "description",
+                    "Company description not available."
+                )
             )
 
-            st.divider()
+        else:
 
-            # --------------------------------------------------
-            # Complete Information Table
-            # --------------------------------------------------
-
-            st.subheader("Complete Company Information")
-
-            st.dataframe(
-                company_dataframe(company),
-                use_container_width=True,
-                hide_index=True
-            )
+            st.warning("Company information is not available.")
 
     except Exception as e:
 
-        st.error(f"Error : {e}")
+        st.error(f"Unable to load company information.\n\n{e}")
 
-from src.news import get_stock_news
+
 # ==========================================================
-# TAB 5 : FINANCIAL NEWS
+# TAB 5 : STOCK NEWS
 # ==========================================================
 
 with tab5:
 
-    st.header("📰 Latest Financial News")
-
-    st.write(
-        "Latest news related to the selected company."
-    )
+    st.header("📰 Latest Stock News")
 
     st.divider()
 
     try:
 
-        # ------------------------------------------
-        # Fetch News
-        # ------------------------------------------
+        company_name = ticker.replace(".NS", "")
 
-        news_df = get_stock_news(ticker)
+        news_list = get_stock_news(company_name)
 
-        if news_df.empty:
+        if len(news_list) == 0:
 
-            st.warning(
-                "No recent news found."
-            )
+            st.info("No latest news available.")
 
         else:
 
-            st.success(
-                f"Showing {len(news_df)} latest articles."
-            )
+            for article in news_list:
 
-            st.divider()
+                st.subheader(article.get("title", "No Title"))
 
-            # ------------------------------------------
-            # Display News
-            # ------------------------------------------
+                st.write(article.get("description", ""))
 
-            for index, row in news_df.iterrows():
+                st.caption(
+                    f"Source : {article.get('source', {}).get('name','Unknown')}"
+                )
 
-                st.subheader(row["Title"])
+                st.write(
+                    f"Published : {article.get('publishedAt','N/A')}"
+                )
 
-                col1, col2 = st.columns(2)
+                if article.get("url"):
 
-                with col1:
-
-                    st.write(
-                        "**Source:**",
-                        row["Source"]
-                    )
-
-                with col2:
-
-                    st.write(
-                        "**Published:**",
-                        row["Published"]
-                    )
-
-                if row["Author"]:
-
-                    st.write(
-                        "**Author:**",
-                        row["Author"]
-                    )
-
-                if row["Description"]:
-
-                    st.write(row["Description"])
-
-                if row["URL"]:
-
-                    st.markdown(
-                        f"[📖 Read Full Article]({row['URL']})"
+                    st.link_button(
+                        "Read Full Article",
+                        article["url"]
                     )
 
                 st.divider()
 
-            # ------------------------------------------
-            # News Table
-            # ------------------------------------------
-
-            st.subheader("News Summary")
-
-            st.dataframe(
-                news_df[
-                    [
-                        "Title",
-                        "Source",
-                        "Published"
-                    ]
-                ],
-                use_container_width=True
-            )
-
-            # ------------------------------------------
-            # Download News
-            # ------------------------------------------
-
-            csv = news_df.to_csv(index=False)
-
-            st.download_button(
-
-                label="📥 Download News CSV",
-
-                data=csv,
-
-                file_name=f"{ticker}_news.csv",
-
-                mime="text/csv"
-
-            )
-
     except Exception as e:
 
-        st.error(f"News Error : {e}")
-
-from src.portfolio import (
-    initialize_portfolio,
-    add_stock,
-    delete_stock,
-    portfolio_summary
-)
+        st.error(f"Unable to fetch news.\n\n{e}")
 # ==========================================================
-# TAB 6 : PORTFOLIO TRACKER
+# TAB 6 : PORTFOLIO MANAGEMENT
 # ==========================================================
 
 with tab6:
 
-    st.header("💼 Portfolio Tracker")
-
-    initialize_portfolio()
-
-    st.write(
-        "Track your stock investments with live market prices."
-    )
+    st.header("💼 Portfolio Management")
 
     st.divider()
 
-    # --------------------------------------------------
-    # Add Stock
-    # --------------------------------------------------
+    # ======================================================
+    # ADD STOCK
+    # ======================================================
 
-    st.subheader("➕ Add New Stock")
+    st.subheader("Add Stock")
 
-    c1, c2, c3 = st.columns(3)
+    col1, col2, col3 = st.columns(3)
 
-    with c1:
+    with col1:
 
-        portfolio_stock = st.text_input(
-            "Stock Symbol",
-            value=ticker,
+        portfolio_ticker = st.selectbox(
+            "Stock",
+            stock_list,
             key="portfolio_stock"
         )
 
-    with c2:
+    with col2:
 
         quantity = st.number_input(
             "Quantity",
             min_value=1,
-            value=10
+            value=1,
+            step=1
         )
 
-    with c3:
+    with col3:
 
         buy_price = st.number_input(
-            "Buy Price",
+            "Buy Price (₹)",
             min_value=0.0,
-            value=float(current_price)
+            value=float(current_price),
+            step=1.0
         )
 
-    if st.button(
-        "Add to Portfolio",
-        use_container_width=True
-    ):
+    if st.button("➕ Add to Portfolio"):
 
-        add_stock(
-            portfolio_stock,
-            quantity,
-            buy_price
-        )
+        try:
 
-        st.success(
-            "Stock added successfully!"
-        )
+            add_stock(
 
-        st.rerun()
+                ticker=portfolio_ticker,
+
+                quantity=quantity,
+
+                buy_price=buy_price
+
+            )
+
+            st.success("Stock added successfully!")
+
+            st.rerun()
+
+        except Exception as e:
+
+            st.error(e)
 
     st.divider()
 
-    # --------------------------------------------------
-    # Portfolio Summary
-    # --------------------------------------------------
+    # ======================================================
+    # LOAD PORTFOLIO
+    # ======================================================
 
-    portfolio_df, investment, value, profit = portfolio_summary()
+    portfolio = load_portfolio()
 
-    if portfolio_df.empty:
+    if portfolio.empty:
 
         st.info("Portfolio is empty.")
 
     else:
 
-        st.subheader("📊 Portfolio Summary")
+        portfolio = calculate_portfolio(portfolio)
 
-        p1, p2, p3 = st.columns(3)
-
-        p1.metric(
-            "Investment",
-            f"₹ {investment:,.2f}"
-        )
-
-        p2.metric(
-            "Current Value",
-            f"₹ {value:,.2f}"
-        )
-
-        p3.metric(
-            "Profit / Loss",
-            f"₹ {profit:,.2f}"
-        )
-
-        st.divider()
-
-        st.subheader("📋 Holdings")
+        st.subheader("Portfolio Holdings")
 
         st.dataframe(
-            portfolio_df,
+
+            portfolio,
+
             use_container_width=True,
+
             hide_index=True
-        )
-
-        st.divider()
-
-        # ----------------------------------------------
-        # Portfolio Download
-        # ----------------------------------------------
-
-        csv = portfolio_df.to_csv(index=False)
-
-        st.download_button(
-
-            label="📥 Download Portfolio",
-
-            data=csv,
-
-            file_name="portfolio.csv",
-
-            mime="text/csv"
 
         )
 
         st.divider()
 
-        # ----------------------------------------------
-        # Delete Stock
-        # ----------------------------------------------
+        # ==================================================
+        # SUMMARY
+        # ==================================================
 
-        st.subheader("🗑 Delete Stock")
+        total_investment = portfolio["Investment"].sum()
 
-        delete_index = st.selectbox(
+        current_value = portfolio["Current Value"].sum()
 
-            "Select Row",
+        profit_loss = current_value - total_investment
 
-            portfolio_df.index
+        if total_investment != 0:
+
+            returns = (
+                profit_loss /
+                total_investment
+            ) * 100
+
+        else:
+
+            returns = 0
+
+        c1, c2, c3, c4 = st.columns(4)
+
+        c1.metric(
+
+            "Investment",
+
+            f"₹{total_investment:,.2f}"
 
         )
 
-        if st.button("Delete Selected Stock"):
+        c2.metric(
 
-            delete_stock(delete_index)
+            "Current Value",
 
-            st.success("Stock Deleted Successfully")
+            f"₹{current_value:,.2f}"
 
-            st.rerun()
+        )
 
-        st.divider()
+        c3.metric(
 
-        # ----------------------------------------------
-        # Portfolio Pie Chart
-        # ----------------------------------------------
+            "Profit / Loss",
 
-        st.subheader("🥧 Portfolio Distribution")
+            f"₹{profit_loss:,.2f}"
 
-        pie_data = portfolio_df.groupby(
-            "Stock"
-        )["Investment"].sum()
+        )
 
-        st.pyplot(
-            pie_data.plot.pie(
-                autopct="%1.1f%%",
-                ylabel=""
-            ).figure
+        c4.metric(
+
+            "Return",
+
+            f"{returns:.2f}%"
+
         )
 
         st.divider()
 
-        # ----------------------------------------------
-        # Profit Chart
-        # ----------------------------------------------
+        # ==================================================
+        # PIE CHART
+        # ==================================================
 
-        st.subheader("📈 Profit / Loss")
+        st.subheader("Portfolio Allocation")
 
-        profit_chart = portfolio_df.set_index(
-            "Stock"
-        )["Profit/Loss"]
+        fig = go.Figure(
 
-        st.bar_chart(profit_chart)
+            data=[
 
+                go.Pie(
+
+                    labels=portfolio["Ticker"],
+
+                    values=portfolio["Current Value"],
+
+                    hole=0.45
+
+                )
+
+            ]
+
+        )
+
+        fig.update_layout(
+
+            height=450
+
+        )
+
+        st.plotly_chart(
+
+            fig,
+
+            use_container_width=True
+
+        )
+
+        st.divider()
+
+        # ==================================================
+        # REMOVE STOCK
+        # ==================================================
+
+        st.subheader("Remove Stock")
+
+        delete_stock = st.selectbox(
+
+            "Select Stock",
+
+            portfolio["Ticker"].tolist()
+
+        )
+
+        if st.button("🗑 Remove Stock"):
+
+            try:
+
+                remove_stock(delete_stock)
+
+                st.success("Stock removed.")
+
+                st.rerun()
+
+            except Exception as e:
+
+                st.error(e)
 # ==========================================================
 # TAB 7 : EMAIL ALERTS
 # ==========================================================
 
 with tab7:
 
-    st.header("📧 Stock Email Alerts")
+    st.header("📧 Email Alerts")
 
-    st.write("Create price or signal alerts for your selected stock.")
+    st.write(
+        "Create price alerts and receive email notifications."
+    )
 
     st.divider()
 
-    email = st.text_input("Receiver Email")
+    email = st.text_input(
+        "Email Address"
+    )
 
     alert_type = st.selectbox(
         "Alert Type",
@@ -1441,25 +1428,37 @@ with tab7:
     target_price = st.number_input(
         "Target Price",
         min_value=0.0,
-        value=float(current_price)
+        value=float(current_price),
+        step=1.0
     )
 
     if st.button("Save Alert"):
 
         if validate_email(email):
 
-            save_alert(
-                email=email,
-                ticker=ticker,
-                alert_type=alert_type,
-                target_price=target_price
-            )
+            try:
 
-            st.success("Alert Saved Successfully!")
+                save_alert(
+
+                    email=email,
+
+                    ticker=ticker,
+
+                    alert_type=alert_type,
+
+                    target_price=target_price
+
+                )
+
+                st.success("Alert Saved Successfully!")
+
+            except Exception as e:
+
+                st.error(e)
 
         else:
 
-            st.error("Invalid Email Address")
+            st.error("Please enter a valid email address.")
 
     st.divider()
 
@@ -1469,7 +1468,7 @@ with tab7:
 
     if alerts.empty:
 
-        st.info("No Alerts Found")
+        st.info("No alerts found.")
 
     else:
 
@@ -1488,19 +1487,124 @@ with tab7:
 
             delete_alert(delete_index)
 
-            st.success("Alert Deleted Successfully")
+            st.success("Alert Deleted Successfully.")
 
             st.rerun()
 
+# ==========================================================
+# AUTO CHECK EMAIL ALERTS
+# ==========================================================
+
 signal = "HOLD"
 
-check_alerts(
-    ticker=ticker,
-    current_price=current_price,
-    signal=signal,
-    sender_email=EMAIL,
-    app_password=PASSWORD
-)            
+if predicted_price is not None:
+
+    if predicted_price > current_price:
+
+        signal = "BUY"
+
+    elif predicted_price < current_price:
+
+        signal = "SELL"
+
+try:
+
+    check_alerts(
+
+        ticker=ticker,
+
+        current_price=current_price,
+
+        predicted_price=predicted_price,
+
+        signal=signal
+
+    )
+
+except Exception:
+
+    pass
+
+# ==========================================================
+# AI RECOMMENDATION
+# ==========================================================
+
+st.divider()
+
+st.header("🧠 AI Recommendation")
+
+try:
+
+    recommendation = generate_recommendation(
+
+        ticker=ticker,
+
+        current_price=current_price,
+
+        predicted_price=predicted_price,
+
+        rsi=rsi,
+
+        macd=macd,
+
+        adx=adx
+
+    )
+
+    st.success(recommendation)
+
+except Exception as e:
+
+    st.warning("Unable to generate AI recommendation.")
+
+    st.code(str(e))
+# ==========================================================
+# PDF REPORT
+# ==========================================================
+
+st.divider()
+
+st.header("📄 Generate PDF Report")
+
+if st.button("Generate Report"):
+
+    try:
+
+        report_data = {
+
+            "ticker": ticker,
+            "current_price": current_price,
+            "predicted_price": predicted_price,
+            "trend": trend,
+            "rsi": rsi,
+            "macd": macd,
+            "adx": adx,
+            "sma20": sma20,
+            "ema20": ema20
+
+        }
+
+        pdf_path = create_pdf_report(report_data)
+
+        with open(pdf_path, "rb") as file:
+
+            st.download_button(
+
+                label="⬇ Download PDF Report",
+
+                data=file,
+
+                file_name=f"{ticker}_Stock_Report.pdf",
+
+                mime="application/pdf"
+
+            )
+
+        st.success("Report generated successfully!")
+
+    except Exception as e:
+
+        st.error(f"Unable to generate report.\n\n{e}")
 
 # ==========================================================
 # PREDICTION HISTORY
@@ -1508,230 +1612,207 @@ check_alerts(
 
 st.divider()
 
-st.header("📜 Prediction History")
+st.header("📊 Prediction History")
 
-history = load_prediction_history()
+try:
 
-if history.empty:
+    history = load_prediction_history()
 
-    st.info("No prediction history available.")
+    if history.empty:
 
-else:
+        st.info("No prediction history available.")
 
-    st.dataframe(
-        history,
-        use_container_width=True,
-        hide_index=True
-    )
+    else:
 
-    csv = history.to_csv(index=False)
+        st.dataframe(
 
-    st.download_button(
+            history,
 
-        label="📥 Download Prediction History",
+            use_container_width=True,
 
-        data=csv,
+            hide_index=True
 
-        file_name="prediction_history.csv",
+        )
 
-        mime="text/csv"
+        csv = history.to_csv(index=False).encode("utf-8")
 
-    )
+        st.download_button(
 
+            "⬇ Download Prediction History",
+
+            data=csv,
+
+            file_name="prediction_history.csv",
+
+            mime="text/csv"
+
+        )
+
+except Exception as e:
+
+    st.warning(str(e))
 # ==========================================================
-# SIDEBAR INFORMATION
-# ==========================================================
-
-st.sidebar.divider()
-
-st.sidebar.header("📊 Live Information")
-
-st.sidebar.metric(
-
-    "Current Price",
-
-    f"₹ {current_price:.2f}"
-
-)
-
-st.sidebar.metric(
-
-    "Today's High",
-
-    f"₹ {high_price:.2f}"
-
-)
-
-st.sidebar.metric(
-
-    "Today's Low",
-
-    f"₹ {low_price:.2f}"
-
-)
-
-st.sidebar.metric(
-
-    "Volume",
-
-    f"{volume:,}"
-
-)
-
-st.sidebar.divider()
-
-st.sidebar.subheader("Technical Indicators")
-
-st.sidebar.write(
-
-    f"RSI : {latest['RSI']:.2f}"
-
-)
-
-st.sidebar.write(
-
-    f"MACD : {latest['MACD']:.2f}"
-
-)
-
-st.sidebar.write(
-
-    f"SMA20 : {latest['SMA20']:.2f}"
-
-)
-
-st.sidebar.write(
-
-    f"SMA50 : {latest['SMA50']:.2f}"
-
-)
-
-st.sidebar.divider()
-
-# ==========================================================
-# DATA DOWNLOAD
-# ==========================================================
-
-st.header("⬇ Download Data")
-
-download_df = df.copy()
-
-csv = download_df.to_csv().encode("utf-8")
-
-st.download_button(
-
-    label="📥 Download Historical Stock Data",
-
-    data=csv,
-
-    file_name=f"{ticker}_historical_data.csv",
-
-    mime="text/csv"
-
-)
-
-# ==========================================================
-# DATASET INFORMATION
+# PDF REPORT
 # ==========================================================
 
 st.divider()
 
-st.header("📊 Dataset Information")
+st.header("📄 Generate PDF Report")
 
-c1, c2, c3 = st.columns(3)
+if st.button("Generate Report"):
 
-c1.metric(
+    try:
 
-    "Rows",
+        report_data = {
 
-    len(df)
+            "ticker": ticker,
+            "current_price": current_price,
+            "predicted_price": predicted_price,
+            "trend": trend,
+            "rsi": rsi,
+            "macd": macd,
+            "adx": adx,
+            "sma20": sma20,
+            "ema20": ema20
 
-)
+        }
 
-c2.metric(
+        pdf_path = create_pdf_report(report_data)
 
-    "Columns",
+        with open(pdf_path, "rb") as file:
 
-    len(df.columns)
+            st.download_button(
 
-)
+                label="⬇ Download PDF Report",
 
-c3.metric(
+                data=file,
 
-    "Missing Values",
+                file_name=f"{ticker}_Stock_Report.pdf",
 
-    int(df.isnull().sum().sum())
+                mime="application/pdf"
 
-)
+            )
 
-st.write("Columns Available")
+        st.success("Report generated successfully!")
 
-st.write(list(df.columns))
+    except Exception as e:
 
-# ==========================================================
-# LAST UPDATED
-# ==========================================================
-
-st.divider()
-
-st.info(
-
-    f"""
-Last Updated
-
-Date : {current_date()}
-
-Time : {current_time()}
-
-Stock : {ticker}
-"""
-)
-
+        st.error(f"Unable to generate report.\n\n{e}")
 
 # ==========================================================
-# FOOTER
+# PREDICTION HISTORY
 # ==========================================================
 
 st.divider()
 
-st.markdown(
-"""
----
-### 📈 Live Stock Analysis & Prediction
+st.header("📊 Prediction History")
 
-Developed using:
+try:
 
-- Streamlit
-- Python
-- Plotly
-- yfinance
-- Machine Learning
+    history = load_prediction_history()
+
+    if history.empty:
+
+        st.info("No prediction history available.")
+
+    else:
+
+        st.dataframe(
+
+            history,
+
+            use_container_width=True,
+
+            hide_index=True
+
+        )
+
+        csv = history.to_csv(index=False).encode("utf-8")
+
+        st.download_button(
+
+            "⬇ Download Prediction History",
+
+            data=csv,
+
+            file_name="prediction_history.csv",
+
+            mime="text/csv"
+
+        )
+
+except Exception as e:
+
+    st.warning(str(e)) 
+# ==========================================================
+# FINAL SECTION : ABOUT / FOOTER
+# ==========================================================
+
+st.divider()
+
+with st.expander("ℹ About This Project", expanded=False):
+
+    st.markdown("""
+## Live Stock Analysis & Prediction
+
+This project provides real-time stock market analysis using
+Yahoo Finance data and Machine Learning.
+
+### Features
+
+- Live Stock Price
 - Technical Indicators
-- Random Forest
-- LSTM
+- Candlestick Charts
+- Company Information
+- Latest News
+- Random Forest Prediction
+- Portfolio Management
+- Email Alerts
+- PDF Report Generation
+- AI Recommendation
+
+### Technologies
+
+- Python
+- Streamlit
 - Pandas
-- NumPy
+- Plotly
+- Scikit-learn
+- TensorFlow (Optional)
+- yFinance
+- NewsAPI
+- ReportLab
 
-Features Included
+Developed by **Ganesh Gokhale**
+""")
 
-✅ Live Stock Price
+st.divider()
 
-✅ Candlestick Chart
+col1, col2, col3 = st.columns(3)
 
-✅ Technical Indicators
+with col1:
 
-✅ Company Information
+    st.metric(
+        "Ticker",
+        ticker
+    )
 
-✅ Financial News
+with col2:
 
-✅ Portfolio Tracker
+    st.metric(
+        "Rows Loaded",
+        len(df)
+    )
 
-✅ Machine Learning Prediction
+with col3:
 
-✅ Prediction History
+    st.metric(
+        "Last Close",
+        f"₹{current_price:.2f}"
+    )
 
-✅ CSV Download
+st.divider()
 
-© 2026 Ganesh Gokhale
-"""
-)
+st.caption(
+    "© 2026 Live Stock Analysis & Prediction | Built using Streamlit"
+)                            
