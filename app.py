@@ -56,7 +56,7 @@ from src.visualization import (
     volume_chart
 )
 
-from src.company_info import get_company_information
+from src.company_info import company_report
 
 from src.news import get_stock_news
 
