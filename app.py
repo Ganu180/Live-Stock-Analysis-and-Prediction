@@ -388,7 +388,7 @@ else:
 
 try:
 
-    company = get_company_information(ticker)
+    company = company_report(ticker)
 
 except Exception:
 
@@ -658,7 +658,7 @@ with tab2:
 
         try:
 
-            fig = create_candlestick_chart(df)
+            fig = candlestick_chart(df)
 
             st.plotly_chart(
                 fig,
@@ -679,7 +679,7 @@ with tab2:
 
         try:
 
-            fig = plot_volume(df)
+            fig = volume_chart(df)
 
             st.plotly_chart(
                 fig,
@@ -702,7 +702,7 @@ with tab2:
 
             try:
 
-                fig = plot_rsi(df)
+                fig = rsi_chart(df)
 
                 st.plotly_chart(
                     fig,
@@ -733,7 +733,7 @@ with tab2:
 
             try:
 
-                fig = plot_macd(df)
+                fig = macd_chart(df)
 
                 st.plotly_chart(
                     fig,
@@ -764,7 +764,7 @@ with tab2:
 
             try:
 
-                fig = plot_bollinger(df)
+                fig = bollinger_chart(df)
 
                 st.plotly_chart(
                     fig,
@@ -1088,7 +1088,7 @@ with tab4:
 
     try:
 
-        info = get_company_information(ticker)
+        info = company_report(ticker)
 
         if info:
 
@@ -1294,60 +1294,42 @@ with tab6:
 
     c2.metric(
         "Current Value",
+        f"₹{current_value:,.2f}"
+    )
 
-            f"₹{current_value:,.2f}"
+    c3.metric(
+        "Profit / Loss",
+        f"₹{profit_loss:,.2f}"
+    )
 
-        )
+    c4.metric(
+        "Return",
+        f"{returns:.2f}%"
+    )
 
-        c3.metric(
+    st.divider()
 
-            "Profit / Loss",
+    # ==================================================
+    # PIE CHART
+    # ==================================================
 
-            f"₹{profit_loss:,.2f}"
+    st.subheader("Portfolio Allocation")
 
-        )
+    fig = go.Figure(
+        data=[
+            go.Pie(
+                labels=portfolio["Ticker"],
+                values=portfolio["Current Value"],
+                hole=0.45
+            )
+        ]
+    )
 
-        c4.metric(
+    fig.update_layout(
+        height=450
+    )
 
-            "Return",
-
-            f"{returns:.2f}%"
-
-        )
-
-        st.divider()
-
-        # ==================================================
-        # PIE CHART
-        # ==================================================
-
-        st.subheader("Portfolio Allocation")
-
-        fig = go.Figure(
-
-            data=[
-
-                go.Pie(
-
-                    labels=portfolio["Ticker"],
-
-                    values=portfolio["Current Value"],
-
-                    hole=0.45
-
-                )
-
-            ]
-
-        )
-
-        fig.update_layout(
-
-            height=450
-
-        )
-
-        st.plotly_chart(
+    st.plotly_chart(
 
             fig,
 
@@ -1355,33 +1337,33 @@ with tab6:
 
         )
 
-        st.divider()
+    st.divider()
 
-        # ==================================================
-        # REMOVE STOCK
-        # ==================================================
+    # ==================================================
+    # REMOVE STOCK
+    # ==================================================
 
-        st.subheader("Remove Stock")
+    st.subheader("Remove Stock")
 
-        delete_stock = st.selectbox(
+    delete_stock = st.selectbox(
 
-            "Select Stock",
+        "Select Stock",
 
-            portfolio["Ticker"].tolist()
+        portfolio["Ticker"].tolist()
 
-        )
+    )
 
-        if st.button("🗑 Remove Stock"):
+    if st.button("🗑 Remove Stock"):
 
-            try:
+        try:
 
-                remove_stock(delete_stock)
+            remove_stock(delete_stock)
 
-                st.success("Stock removed.")
+            st.success("Stock removed.")
 
-                st.rerun()
+            st.rerun()
 
-            except Exception as e:
+        except Exception as e:
 
                 st.error(e)
 # ==========================================================
