@@ -49,11 +49,11 @@ except Exception:
 from src.indicators import calculate_indicators
 
 from src.visualization import (
-    create_candlestick_chart,
-    plot_rsi,
-    plot_macd,
-    plot_bollinger,
-    plot_volume
+    candlestick_chart,
+    rsi_chart,
+    macd_chart,
+    bollinger_chart,
+    volume_chart
 )
 
 from src.company_info import get_company_information
