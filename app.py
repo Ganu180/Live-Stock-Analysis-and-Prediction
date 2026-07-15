@@ -65,7 +65,6 @@ from src.portfolio import (
     add_stock,
     remove_stock,
     portfolio_summary,
-    calculate_portfolio,
 )
 
 from src.ai_recommendation import generate_recommendation
