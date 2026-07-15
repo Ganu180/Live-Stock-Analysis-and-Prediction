@@ -64,7 +64,8 @@ from src.portfolio import (
     load_portfolio,
     add_stock,
     remove_stock,
-    calculate_portfolio
+    portfolio_summary,
+    calculate_portfolio,
 )
 
 from src.ai_recommendation import generate_recommendation
@@ -1232,7 +1233,7 @@ with tab6:
 
             add_stock(
 
-                ticker=portfolio_ticker,
+                stock=portfolio_ticker,
 
                 quantity=quantity,
 
@@ -1254,64 +1255,45 @@ with tab6:
     # LOAD PORTFOLIO
     # ======================================================
 
-    portfolio = load_portfolio()
+    portfolio, total_investment, current_value, profit_loss, returns = portfolio_summary()
 
     if portfolio.empty:
-
-        st.info("Portfolio is empty.")
-
+       st.info("Portfolio is empty.")
     else:
+       st.subheader("Portfolio Holdings")
 
-        portfolio = calculate_portfolio(portfolio)
+    st.dataframe(
+        portfolio,
+        use_container_width=True,
+        hide_index=True
+    )
 
-        st.subheader("Portfolio Holdings")
+    st.divider()
 
-        st.dataframe(
+    # ==================================================
+    # SUMMARY
+    # ==================================================
 
-            portfolio,
+    total_investment = portfolio["Investment"].sum()
 
-            use_container_width=True,
+    current_value = portfolio["Current Value"].sum()
 
-            hide_index=True
+    profit_loss = current_value - total_investment
 
-        )
+    if total_investment != 0:
+        returns = (profit_loss / total_investment) * 100
+    else:
+        returns = 0
 
-        st.divider()
+    c1, c2, c3, c4 = st.columns(4)
 
-        # ==================================================
-        # SUMMARY
-        # ==================================================
+    c1.metric(
+        "Investment",
+        f"₹{total_investment:,.2f}"
+    )
 
-        total_investment = portfolio["Investment"].sum()
-
-        current_value = portfolio["Current Value"].sum()
-
-        profit_loss = current_value - total_investment
-
-        if total_investment != 0:
-
-            returns = (
-                profit_loss /
-                total_investment
-            ) * 100
-
-        else:
-
-            returns = 0
-
-        c1, c2, c3, c4 = st.columns(4)
-
-        c1.metric(
-
-            "Investment",
-
-            f"₹{total_investment:,.2f}"
-
-        )
-
-        c2.metric(
-
-            "Current Value",
+    c2.metric(
+        "Current Value",
 
             f"₹{current_value:,.2f}"
 
