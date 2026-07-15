@@ -1393,3 +1393,42 @@ __all__ = [
 # END OF PART 5
 # =========================================================
 
+def generate_recommendation(
+    ticker: str,
+    current_price: float,
+    predicted_price: float,
+    rsi: float,
+    macd: float,
+    adx: float,
+) -> str:
+    """
+    Simple recommendation wrapper used by app.py.
+    """
+
+    score = 0
+
+    if predicted_price > current_price:
+        score += 2
+    else:
+        score -= 2
+
+    if rsi < 30:
+        score += 1
+    elif rsi > 70:
+        score -= 1
+
+    if macd > 0:
+        score += 1
+    else:
+        score -= 1
+
+    if adx > 25:
+        score += 1
+
+    if score >= 3:
+        return f"✅ BUY {ticker} - Bullish signals detected."
+
+    elif score <= -2:
+        return f"🔴 SELL {ticker} - Bearish signals detected."
+
+    return f"🟡 HOLD {ticker} - Wait for a stronger trend."
