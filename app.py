@@ -1348,7 +1348,7 @@ with tab6:
 
         "Select Stock",
 
-        portfolio["Ticker"].tolist()
+        portfolio["Stock"].tolist()
 
     )
 
