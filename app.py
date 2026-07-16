@@ -1521,53 +1521,6 @@ except Exception as e:
     st.warning("Unable to generate AI recommendation.")
 
     st.code(str(e))
-# ==========================================================
-# PDF REPORT
-# ==========================================================
-
-st.divider()
-
-st.header("📄 Generate PDF Report")
-
-if st.button("Generate Report"):
-
-    try:
-
-        report_data = {
-
-            "ticker": ticker,
-            "current_price": current_price,
-            "predicted_price": predicted_price,
-            "trend": trend,
-            "rsi": rsi,
-            "macd": macd,
-            "adx": adx,
-            "sma20": sma20,
-            "ema20": ema20
-
-        }
-
-        pdf_path = create_pdf_report(report_data)
-
-        with open(pdf_path, "rb") as file:
-
-            st.download_button(
-
-                label="⬇ Download PDF Report",
-
-                data=file,
-
-                file_name=f"{ticker}_Stock_Report.pdf",
-
-                mime="application/pdf"
-
-            )
-
-        st.success("Report generated successfully!")
-
-    except Exception as e:
-
-        st.error(f"Unable to generate report.\n\n{e}")
 
 # ==========================================================
 # PREDICTION HISTORY
@@ -1628,7 +1581,7 @@ if st.button("Generate Report"):
 
         report_data = {
 
-            "ticker": ticker,
+            "ticker": Str,
             "current_price": current_price,
             "predicted_price": predicted_price,
             "trend": trend,
