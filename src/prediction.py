@@ -1,55 +1,89 @@
 """
-==========================================================
+=========================================================
 Live Stock Analysis & Prediction
-Prediction Module
-Version : 2.0
-==========================================================
+File    : prediction.py
+Version : 3.0
+Part    : 1
+Python  : 3.12
+=========================================================
 """
 
-import os
-import joblib
+from __future__ import annotations
+
+import logging
 import warnings
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import joblib
 import numpy as np
 import pandas as pd
 
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_error,
     r2_score,
 )
+from sklearn.model_selection import train_test_split
 
 warnings.filterwarnings("ignore")
 
 # ==========================================================
-# MODEL DIRECTORY
+# LOGGING
 # ==========================================================
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-MODEL_DIR = os.path.join(BASE_DIR, "models")
-
-os.makedirs(MODEL_DIR, exist_ok=True)
-
-RF_MODEL_PATH = os.path.join(
-    MODEL_DIR,
-    "random_forest_model.pkl"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
 )
 
-SCALER_PATH = os.path.join(
-    MODEL_DIR,
-    "scaler.pkl"
-)
-
-LSTM_MODEL_PATH = os.path.join(
-    MODEL_DIR,
-    "lstm_model.keras"
-)
+logger = logging.getLogger(__name__)
 
 # ==========================================================
-# REQUIRED FEATURES
+# MODULE INFORMATION
 # ==========================================================
+
+VERSION = "3.0"
+
+MODEL_VERSION = "3.0"
+
+MODEL_NAME = "Random Forest Regressor"
+
+DEFAULT_RANDOM_STATE = 42
+
+DEFAULT_TEST_SIZE = 0.20
+
+DEFAULT_ESTIMATORS = 300
+
+DEFAULT_MAX_DEPTH = 12
+
+DEFAULT_MIN_SAMPLES_SPLIT = 5
+
+DEFAULT_MIN_SAMPLES_LEAF = 2
+
+TARGET_COLUMN = "Close"
+
+# ==========================================================
+# PROJECT PATHS
+# ==========================================================
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+MODEL_DIR = BASE_DIR / "models"
+
+MODEL_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+MODEL_FILE = MODEL_DIR / "random_forest_model.pkl"
+
+# ==========================================================
+# SINGLE FEATURE SCHEMA
+# ==========================================================
+# Every module in the project MUST use this list.
 
 FEATURE_COLUMNS = [
 
@@ -81,648 +115,1110 @@ FEATURE_COLUMNS = [
 
     "ATR",
 
-    "OBV"
+    "OBV",
 
 ]
 
-TARGET_COLUMN = "Close"
-
 # ==========================================================
-# VALIDATE DATA
+# EXCEPTIONS
 # ==========================================================
 
-def validate_dataframe(df: pd.DataFrame) -> bool:
+class PredictionError(Exception):
+    """Base prediction exception."""
+
+
+class ModelNotFoundError(PredictionError):
+    """Model file not found."""
+
+
+class FeatureMismatchError(PredictionError):
+    """Input features do not match training."""
+
+
+class TrainingError(PredictionError):
+    """Training failed."""
+
+
+class PredictionValidationError(PredictionError):
+    """Invalid prediction input."""
+
+
+# ==========================================================
+# CONFIGURATION
+# ==========================================================
+
+@dataclass(slots=True)
+class PredictionConfig:
+
+    random_state: int = DEFAULT_RANDOM_STATE
+
+    test_size: float = DEFAULT_TEST_SIZE
+
+    n_estimators: int = DEFAULT_ESTIMATORS
+
+    max_depth: int = DEFAULT_MAX_DEPTH
+
+    min_samples_split: int = DEFAULT_MIN_SAMPLES_SPLIT
+
+    min_samples_leaf: int = DEFAULT_MIN_SAMPLES_LEAF
+
+    target_column: str = TARGET_COLUMN
+
+    auto_save: bool = True
+
+    auto_train: bool = True
+
+
+# ==========================================================
+# HELPER FUNCTIONS
+# ==========================================================
+
+def model_exists() -> bool:
     """
-    Validate dataframe before prediction.
+    Check whether the Random Forest model exists.
     """
 
-    if df is None:
+    return MODEL_FILE.exists()
+
+
+def model_path() -> Path:
+    """
+    Return model path.
+    """
+
+    return MODEL_FILE
+
+
+def get_feature_columns() -> list[str]:
+    """
+    Return feature schema.
+    """
+
+    return FEATURE_COLUMNS.copy()
+
+
+def validate_dataframe(
+    dataframe: pd.DataFrame,
+) -> bool:
+    """
+    Basic dataframe validation.
+    """
+
+    if dataframe is None:
         return False
 
-    if df.empty:
-        return False
-
-    for column in FEATURE_COLUMNS:
-
-        if column not in df.columns:
-            return False
-
-    if TARGET_COLUMN not in df.columns:
+    if dataframe.empty:
         return False
 
     return True
 
-# ==========================================================
-# PREPARE FEATURES
-# ==========================================================
 
-def prepare_features(df: pd.DataFrame):
+def validate_target(
+    dataframe: pd.DataFrame,
+    target: str = TARGET_COLUMN,
+) -> bool:
     """
-    Returns X and y for training.
+    Validate target column.
     """
 
-    if not validate_dataframe(df):
+    return target in dataframe.columns
 
-        raise ValueError(
-            "Dataframe does not contain required columns."
+
+# ==========================================================
+# END OF PART 1
+# ==========================================================
+
+# ==========================================================
+# DATA VALIDATION
+# ==========================================================
+
+def validate_feature_columns(
+    dataframe: pd.DataFrame,
+    required_columns: list[str] | None = None,
+) -> bool:
+    """
+    Validate feature columns.
+    """
+
+    if required_columns is None:
+
+        required_columns = FEATURE_COLUMNS
+
+    if not validate_dataframe(dataframe):
+
+        return False
+
+    missing = [
+
+        column
+
+        for column in required_columns
+
+        if column not in dataframe.columns
+
+    ]
+
+    if missing:
+
+        logger.error(
+            "Missing feature columns: %s",
+            ", ".join(missing),
         )
 
-    data = df.copy()
+        return False
 
-    data = data.dropna()
+    return True
 
-    X = data[FEATURE_COLUMNS]
 
-    y = data[TARGET_COLUMN]
+def validate_training_dataframe(
+    dataframe: pd.DataFrame,
+) -> bool:
+    """
+    Validate dataframe for training.
+    """
+
+    if not validate_dataframe(dataframe):
+
+        return False
+
+    if not validate_feature_columns(dataframe):
+
+        return False
+
+    if not validate_target(dataframe):
+
+        logger.error(
+            "Target column '%s' missing.",
+            TARGET_COLUMN,
+        )
+
+        return False
+
+    return True
+
+
+# ==========================================================
+# FEATURE ALIGNMENT
+# ==========================================================
+
+def align_features(
+    dataframe: pd.DataFrame,
+    feature_columns: list[str],
+) -> pd.DataFrame:
+    """
+    Align dataframe with training features.
+
+    Missing columns are added.
+    Extra columns are removed.
+    """
+
+    try:
+
+        df = dataframe.copy()
+
+        for column in feature_columns:
+
+            if column not in df.columns:
+
+                logger.warning(
+                    "Adding missing feature: %s",
+                    column,
+                )
+
+                df[column] = 0.0
+
+        df = df.reindex(
+            columns=feature_columns,
+            fill_value=0.0,
+        )
+
+        return df
+
+    except Exception as error:
+
+        logger.exception(error)
+
+        raise FeatureMismatchError(
+            "Unable to align feature columns."
+        ) from error
+
+
+# ==========================================================
+# DATA CLEANING
+# ==========================================================
+
+def clean_dataframe(
+    dataframe: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Clean prediction dataframe.
+    """
+
+    try:
+
+        df = dataframe.copy()
+
+        df.replace(
+            [np.inf, -np.inf],
+            np.nan,
+            inplace=True,
+        )
+
+        numeric = df.select_dtypes(
+            include=np.number,
+        ).columns
+
+        df[numeric] = df[numeric].fillna(
+            df[numeric].median()
+        )
+
+        df.ffill(inplace=True)
+
+        df.bfill(inplace=True)
+
+        df.drop_duplicates(
+            inplace=True,
+        )
+
+        return df
+
+    except Exception as error:
+
+        logger.exception(error)
+
+        raise PredictionValidationError(
+            "Failed to clean dataframe."
+        ) from error
+
+
+# ==========================================================
+# FEATURE PREPARATION
+# ==========================================================
+
+def prepare_training_data(
+    dataframe: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """
+    Prepare X and y for training.
+    """
+
+    if not validate_training_dataframe(
+        dataframe,
+    ):
+
+        raise PredictionValidationError(
+            "Training dataframe is invalid."
+        )
+
+    df = clean_dataframe(
+        dataframe,
+    )
+
+    X = df.loc[
+        :,
+        FEATURE_COLUMNS,
+    ].copy()
+
+    y = df.loc[
+        :,
+        TARGET_COLUMN,
+    ].copy()
 
     return X, y
 
-# ==========================================================
-# LOAD RANDOM FOREST MODEL
-# ==========================================================
 
-def load_random_forest():
+def prepare_prediction_data(
+    dataframe: pd.DataFrame,
+    trained_features: list[str],
+) -> pd.DataFrame:
+    """
+    Prepare dataframe for prediction.
+    """
 
-    if not os.path.exists(RF_MODEL_PATH):
+    if not validate_dataframe(
+        dataframe,
+    ):
 
-        return None
-
-    try:
-
-        model = joblib.load(RF_MODEL_PATH)
-
-        return model
-
-    except Exception:
-
-        return None
-
-# ==========================================================
-# SAVE RANDOM FOREST MODEL
-# ==========================================================
-
-def save_random_forest(model):
-
-    joblib.dump(
-
-        model,
-
-        RF_MODEL_PATH
-
-    )
-
-# ==========================================================
-# LOAD LSTM MODEL
-# ==========================================================
-
-def load_lstm():
-
-    if not os.path.exists(LSTM_MODEL_PATH):
-
-        return None
-
-    try:
-
-        try:
-            import importlib
-
-            tensorflow = importlib.import_module("tensorflow")
-            load_model = tensorflow.keras.models.load_model
-        except Exception:
-            from keras.models import load_model
-
-        model = load_model(
-
-            LSTM_MODEL_PATH,
-
-            compile=False
-
+        raise PredictionValidationError(
+            "Prediction dataframe is empty."
         )
 
-        return model
+    df = clean_dataframe(
+        dataframe,
+    )
 
-    except Exception:
+    df = align_features(
+        df,
+        trained_features,
+    )
 
-        return None
+    return df
+
+
 # ==========================================================
-# PART 2 : RANDOM FOREST TRAINING, EVALUATION & MODEL SAVING
+# MODEL PACKAGE
 # ==========================================================
 
-from pathlib import Path
-import joblib
+def create_model_package(
+    model: RandomForestRegressor,
+    features: list[str],
+    metrics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Create model package.
+    """
 
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import (
-    mean_absolute_error,
-    mean_squared_error,
-    r2_score,
-)
+    return {
 
+        "version": MODEL_VERSION,
+
+        "model_type": MODEL_NAME,
+
+        "model": model,
+
+        "features": features,
+
+        "metrics": metrics or {},
+
+    }
+
+
+# ==========================================================
+# END OF PART 2
+# ==========================================================
+
+# ==========================================================
+# STOCK PREDICTION MODEL
+# ==========================================================
 
 class StockPredictionModel:
     """
-    Random Forest based prediction model.
+    Random Forest prediction model.
     """
 
     def __init__(
         self,
-        model_dir: str = "models",
-        model_name: str = "random_forest_model.pkl",
-        random_state: int = 42,
-    ):
-        self.random_state = random_state
+        config: PredictionConfig | None = None,
+    ) -> None:
 
-        self.model_dir = Path(model_dir)
-        self.model_dir.mkdir(parents=True, exist_ok=True)
+        self.config = config or PredictionConfig()
 
-        self.model_path = self.model_dir / model_name
+        self.model: RandomForestRegressor | None = None
 
-        self.model = RandomForestRegressor(
-            n_estimators=300,
-            max_depth=12,
-            min_samples_split=5,
-            min_samples_leaf=2,
-            random_state=self.random_state,
-            n_jobs=-1,
+        self.feature_columns: list[str] = FEATURE_COLUMNS.copy()
+
+        self.metrics: dict[str, Any] = {}
+
+        self.is_trained: bool = False
+
+        logger.info(
+            "%s Version %s initialized.",
+            MODEL_NAME,
+            VERSION,
         )
 
-        self.metrics = {}
-        self.feature_columns = []
+    # ------------------------------------------------------
+
+    def create_model(
+        self,
+    ) -> RandomForestRegressor:
+        """
+        Create Random Forest model.
+        """
+
+        return RandomForestRegressor(
+
+            n_estimators=self.config.n_estimators,
+
+            max_depth=self.config.max_depth,
+
+            min_samples_split=self.config.min_samples_split,
+
+            min_samples_leaf=self.config.min_samples_leaf,
+
+            random_state=self.config.random_state,
+
+            n_jobs=-1,
+
+        )
 
     # ------------------------------------------------------
-    # Train/Test Split
-    # ------------------------------------------------------
-    def split_data(
+
+    def save(
         self,
-        X,
-        y,
-        test_size: float = 0.2,
-    ):
+    ) -> None:
+        """
+        Save model package.
+        """
+
+        if self.model is None:
+
+            raise ModelNotFoundError(
+                "No model available to save."
+            )
+
+        package = create_model_package(
+
+            model=self.model,
+
+            features=self.feature_columns,
+
+            metrics=self.metrics,
+
+        )
+
+        joblib.dump(
+
+            package,
+
+            MODEL_FILE,
+
+        )
+
+        logger.info(
+
+            "Model saved: %s",
+
+            MODEL_FILE,
+
+        )
+
+    # ------------------------------------------------------
+
+    def load(
+        self,
+    ) -> bool:
+        """
+        Load saved model.
+        """
+
+        if not MODEL_FILE.exists():
+
+            logger.warning(
+
+                "Model file not found."
+
+            )
+
+            return False
+
+        package = joblib.load(
+
+            MODEL_FILE
+
+        )
+
+        self.model = package["model"]
+
+        self.feature_columns = package.get(
+
+            "features",
+
+            FEATURE_COLUMNS,
+
+        )
+
+        self.metrics = package.get(
+
+            "metrics",
+
+            {},
+
+        )
+
+        self.is_trained = True
+
+        logger.info(
+
+            "Model loaded successfully."
+
+        )
+
+        return True
+
+    # ------------------------------------------------------
+
+    def fit(
+        self,
+        dataframe: pd.DataFrame,
+    ) -> dict[str, float]:
+        """
+        Train Random Forest.
+        """
+
         try:
-            return train_test_split(
+
+            X, y = prepare_training_data(
+
+                dataframe
+
+            )
+
+            self.feature_columns = list(
+
+                X.columns
+
+            )
+
+            X_train, X_test, y_train, y_test = train_test_split(
+
                 X,
+
                 y,
-                test_size=test_size,
-                random_state=self.random_state,
-                shuffle=False,
+
+                test_size=self.config.test_size,
+
+                random_state=self.config.random_state,
+
             )
 
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to split dataset: {e}"
-            ) from e
+            self.model = self.create_model()
 
-    # ------------------------------------------------------
-    # Train Model
-    # ------------------------------------------------------
-    def train(
-        self,
-        X_train,
-        y_train,
-    ):
-        try:
-            self.feature_columns = list(X_train.columns)
+            self.model.fit(
 
-            self.model.fit(X_train, y_train)
+                X_train,
 
-            self.save_model()
+                y_train,
 
-            return self.model
-
-        except Exception as e:
-            raise RuntimeError(
-                f"Model training failed: {e}"
-            ) from e
-
-    # ------------------------------------------------------
-    # Evaluate Model
-    # ------------------------------------------------------
-    def evaluate(
-        self,
-        X_test,
-        y_test,
-    ):
-        try:
-            predictions = self.model.predict(X_test)
-
-            mae = mean_absolute_error(y_test, predictions)
-
-            rmse = mean_squared_error(
-                y_test,
-                predictions,
-                squared=False,
             )
 
-            r2 = r2_score(
-                y_test,
-                predictions,
+            predictions = self.model.predict(
+
+                X_test
+
             )
 
             self.metrics = {
-                "MAE": float(mae),
-                "RMSE": float(rmse),
-                "R2": float(r2),
+
+                "mae": float(
+
+                    mean_absolute_error(
+
+                        y_test,
+
+                        predictions,
+
+                    )
+
+                ),
+
+                "mse": float(
+
+                    mean_squared_error(
+
+                        y_test,
+
+                        predictions,
+
+                    )
+
+                ),
+
+                "rmse": float(
+
+                    np.sqrt(
+
+                        mean_squared_error(
+
+                            y_test,
+
+                            predictions,
+
+                        )
+
+                    )
+
+                ),
+
+                "r2": float(
+
+                    r2_score(
+
+                        y_test,
+
+                        predictions,
+
+                    )
+
+                ),
+
             }
 
-            return {
-                "predictions": predictions,
-                "metrics": self.metrics,
-            }
+            self.is_trained = True
 
-        except Exception as e:
-            raise RuntimeError(
-                f"Evaluation failed: {e}"
-            ) from e
+            if self.config.auto_save:
 
-    # ------------------------------------------------------
-    # Save Model
-    # ------------------------------------------------------
-    def save_model(self):
-        try:
-            model_package = {
-                "model": self.model,
-                "features": self.feature_columns,
-                "metrics": self.metrics,
-            }
+                self.save()
 
-            joblib.dump(
-                model_package,
-                self.model_path,
+            logger.info(
+
+                "Training completed successfully."
+
             )
 
-            return self.model_path
+            return self.metrics
 
-        except Exception as e:
-            raise RuntimeError(
-                f"Unable to save model: {e}"
-            ) from e
+        except Exception as error:
 
-    # ------------------------------------------------------
-    # Load Existing Model
-    # ------------------------------------------------------
-    def load_model(self):
-        try:
-            if not self.model_path.exists():
-                raise FileNotFoundError(
-                    f"Model not found: {self.model_path}"
-                )
+            logger.exception(error)
 
-            package = joblib.load(self.model_path)
+            raise TrainingError(
 
-            self.model = package["model"]
-            self.feature_columns = package.get(
-                "features",
-                [],
-            )
-            self.metrics = package.get(
-                "metrics",
-                {},
-            )
+                "Random Forest training failed."
 
-            return self.model
+            ) from error
 
-        except Exception as e:
-            raise RuntimeError(
-                f"Unable to load model: {e}"
-            ) from e    
+
 # ==========================================================
-# PART 3 : PREDICTION, FORECASTING & FEATURE IMPORTANCE
+# END OF PART 3
 # ==========================================================
 
-import numpy as np
-import pandas as pd
+# ==========================================================
+# PREDICTION METHODS
+# ==========================================================
 
+    def predict(
+        self,
+        dataframe: pd.DataFrame,
+    ) -> np.ndarray:
+        """
+        Predict stock prices.
+        """
 
-    # ------------------------------------------------------
-    # Predict
-    # ------------------------------------------------------
-    def predict(self, X):
-        """
-        Predict values using the trained model.
-        """
         try:
+
             if self.model is None:
-                self.load_model()
 
-            X = X.copy()
+                if not self.load():
 
-            # Ensure feature order matches training
-            if self.feature_columns:
-                X = X[self.feature_columns]
+                    if self.config.auto_train:
+
+                        logger.info(
+                            "No trained model found. Training model..."
+                        )
+
+                        self.fit(dataframe)
+
+                    else:
+
+                        raise ModelNotFoundError(
+                            "Random Forest model not found."
+                        )
+
+            X = prepare_prediction_data(
+
+                dataframe,
+
+                self.feature_columns,
+
+            )
 
             predictions = self.model.predict(X)
 
-            return np.asarray(predictions)
+            return predictions
 
-        except Exception as e:
-            raise RuntimeError(
-                f"Prediction failed: {e}"
-            ) from e
+        except Exception as error:
+
+            logger.exception(error)
+
+            raise PredictionError(
+                "Prediction failed."
+            ) from error
 
     # ------------------------------------------------------
-    # Predict Single Record
+
+    def predict_latest(
+        self,
+        dataframe: pd.DataFrame,
+    ) -> float:
+        """
+        Predict latest stock price.
+        """
+
+        prediction = self.predict(dataframe)
+
+        return float(prediction[-1])
+
     # ------------------------------------------------------
-    def predict_single(self, features):
+
+    def predict_batch(
+        self,
+        datasets: dict[str, pd.DataFrame],
+    ) -> dict[str, float]:
         """
-        Predict a single sample.
+        Predict multiple stocks.
         """
+
+        results: dict[str, float] = {}
+
+        for ticker, df in datasets.items():
+
+            try:
+
+                results[ticker] = self.predict_latest(df)
+
+            except Exception as error:
+
+                logger.exception(error)
+
+                results[ticker] = np.nan
+
+        return results
+
+# ==========================================================
+# FEATURE IMPORTANCE
+# ==========================================================
+
+    def feature_importance(
+        self,
+    ) -> pd.DataFrame:
+        """
+        Return feature importance.
+        """
+
+        if self.model is None:
+
+            raise ModelNotFoundError(
+                "Model not loaded."
+            )
+
+        importance = pd.DataFrame({
+
+            "Feature": self.feature_columns,
+
+            "Importance": self.model.feature_importances_,
+
+        })
+
+        importance.sort_values(
+
+            by="Importance",
+
+            ascending=False,
+
+            inplace=True,
+
+        )
+
+        importance.reset_index(
+
+            drop=True,
+
+            inplace=True,
+
+        )
+
+        return importance
+
+# ==========================================================
+# MODEL INFORMATION
+# ==========================================================
+
+    def model_information(
+        self,
+    ) -> dict[str, Any]:
+        """
+        Return model information.
+        """
+
+        return {
+
+            "version": MODEL_VERSION,
+
+            "model_name": MODEL_NAME,
+
+            "trained": self.is_trained,
+
+            "model_file": str(MODEL_FILE),
+
+            "features": self.feature_columns,
+
+            "feature_count": len(
+
+                self.feature_columns
+
+            ),
+
+            "metrics": self.metrics,
+
+        }
+
+# ==========================================================
+# MODEL UTILITIES
+# ==========================================================
+
+    def delete_model(
+        self,
+    ) -> bool:
+        """
+        Delete saved model.
+        """
+
         try:
-            if isinstance(features, dict):
-                df = pd.DataFrame([features])
 
-            elif isinstance(features, pd.Series):
-                df = features.to_frame().T
+            if MODEL_FILE.exists():
 
-            elif isinstance(features, pd.DataFrame):
-                df = features.copy()
+                MODEL_FILE.unlink()
 
-            else:
-                raise ValueError(
-                    "Input must be dict, Series or DataFrame."
+                logger.info(
+                    "Model deleted."
                 )
 
-            prediction = self.predict(df)
+            self.model = None
 
-            return float(prediction[0])
+            self.is_trained = False
 
-        except Exception as e:
-            raise RuntimeError(
-                f"Single prediction failed: {e}"
-            ) from e
+            self.metrics.clear()
 
-    # ------------------------------------------------------
-    # Multi-day Forecast
-    # ------------------------------------------------------
-    def forecast(self, latest_features, days=7):
+            return True
+
+        except Exception as error:
+
+            logger.exception(error)
+
+            return False
+
+
+# ==========================================================
+# END OF PART 4
+# ==========================================================
+
+# ==========================================================
+# AUTO TRAINING & FORECASTING
+# ==========================================================
+
+    def ensure_model(
+        self,
+        dataframe: pd.DataFrame | None = None,
+    ) -> bool:
         """
-        Recursive forecasting using the latest feature row.
+        Ensure a trained model is available.
         """
+
         try:
-            if self.model is None:
-                self.load_model()
 
-            current = latest_features.copy()
+            if self.model is not None:
 
-            if isinstance(current, pd.Series):
-                current = current.to_frame().T
+                return True
 
-            forecasts = []
+            if self.load():
 
-            for _ in range(days):
+                return True
 
-                value = float(self.predict(current)[0])
+            if dataframe is None:
 
-                forecasts.append(value)
-
-                # Update Close column if present
-                if "Close" in current.columns:
-                    current.loc[current.index[0], "Close"] = value
-
-                # Update lag features if available
-                lag_columns = sorted(
-                    [c for c in current.columns if c.startswith("Lag_")],
-                    reverse=True
+                raise ModelNotFoundError(
+                    "No model found and no training data supplied."
                 )
 
-                if lag_columns:
-                    previous = value
+            if not self.config.auto_train:
 
-                    for lag in lag_columns:
-                        temp = current.loc[current.index[0], lag]
-                        current.loc[current.index[0], lag] = previous
-                        previous = temp
+                raise ModelNotFoundError(
+                    "Automatic training is disabled."
+                )
+
+            logger.info(
+                "Training a new Random Forest model..."
+            )
+
+            self.fit(dataframe)
+
+            return True
+
+        except Exception as error:
+
+            logger.exception(error)
+
+            raise
+
+    # ------------------------------------------------------
+
+    def forecast(
+        self,
+        dataframe: pd.DataFrame,
+        periods: int = 5,
+    ) -> list[float]:
+        """
+        Forecast future prices.
+
+        Uses recursive prediction.
+        """
+
+        try:
+
+            if periods <= 0:
+
+                return []
+
+            self.ensure_model(dataframe)
+
+            df = dataframe.copy()
+
+            forecasts: list[float] = []
+
+            for _ in range(periods):
+
+                prediction = float(
+
+                    self.predict_latest(df)
+
+                )
+
+                forecasts.append(prediction)
+
+                next_row = df.iloc[-1].copy()
+
+                if TARGET_COLUMN in next_row.index:
+
+                    next_row[TARGET_COLUMN] = prediction
+
+                df = pd.concat(
+
+                    [
+
+                        df,
+
+                        pd.DataFrame(
+
+                            [next_row],
+
+                            columns=df.columns,
+
+                        ),
+
+                    ],
+
+                    ignore_index=True,
+
+                )
 
             return forecasts
 
-        except Exception as e:
-            raise RuntimeError(
-                f"Forecast failed: {e}"
-            ) from e
+        except Exception as error:
 
-    # ------------------------------------------------------
-    # Feature Importance
-    # ------------------------------------------------------
-    def feature_importance(self):
-        """
-        Return feature importance values.
-        """
-        try:
-            if self.model is None:
-                self.load_model()
+            logger.exception(error)
 
-            importance = pd.DataFrame(
-                {
-                    "Feature": self.feature_columns,
-                    "Importance": self.model.feature_importances_,
-                }
-            )
-
-            importance = importance.sort_values(
-                by="Importance",
-                ascending=False,
-            ).reset_index(drop=True)
-
-            return importance
-
-        except Exception as e:
-            raise RuntimeError(
-                f"Unable to compute feature importance: {e}"
-            ) from e
-
-    # ------------------------------------------------------
-    # Model Information
-    # ------------------------------------------------------
-    def get_model_info(self):
-        """
-        Return model metadata.
-        """
-        try:
-            return {
-                "model_type": "Random Forest Regressor",
-                "n_estimators": self.model.n_estimators,
-                "max_depth": self.model.max_depth,
-                "features": self.feature_columns,
-                "metrics": self.metrics,
-                "model_path": str(self.model_path),
-            }
-
-        except Exception as e:
-            raise RuntimeError(
-                f"Unable to fetch model information: {e}"
-            ) from e
-# ==========================================================
-# PART 4 : UTILITIES, COMPLETE TRAINING PIPELINE & EXPORTS
-# ==========================================================
-
-    # ------------------------------------------------------
-    # Complete Training Pipeline
-    # ------------------------------------------------------
-    def fit(
-        self,
-        X,
-        y,
-        test_size: float = 0.20,
-    ):
-        """
-        Complete training pipeline.
-        """
-        try:
-            (
-                X_train,
-                X_test,
-                y_train,
-                y_test,
-            ) = self.split_data(
-                X,
-                y,
-                test_size=test_size,
-            )
-
-            self.train(
-                X_train,
-                y_train,
-            )
-
-            evaluation = self.evaluate(
-                X_test,
-                y_test,
-            )
-
-            return {
-                "model": self.model,
-                "metrics": evaluation["metrics"],
-                "predictions": evaluation["predictions"],
-                "X_train": X_train,
-                "X_test": X_test,
-                "y_train": y_train,
-                "y_test": y_test,
-            }
-
-        except Exception as e:
-            raise RuntimeError(
-                f"Training pipeline failed: {e}"
-            ) from e
-
-    # ------------------------------------------------------
-    # Batch Prediction
-    # ------------------------------------------------------
-    def predict_dataframe(
-        self,
-        dataframe,
-    ):
-        """
-        Predict an entire DataFrame and append predictions.
-        """
-        try:
-            df = dataframe.copy()
-
-            predictions = self.predict(df)
-
-            df["Prediction"] = predictions
-
-            return df
-
-        except Exception as e:
-            raise RuntimeError(
-                f"Batch prediction failed: {e}"
-            ) from e
-
-    # ------------------------------------------------------
-    # Export Predictions
-    # ------------------------------------------------------
-    def export_predictions(
-        self,
-        dataframe,
-        output_file="predictions.csv",
-    ):
-        """
-        Export prediction results to CSV.
-        """
-        try:
-            df = self.predict_dataframe(dataframe)
-
-            df.to_csv(
-                output_file,
-                index=False,
-            )
-
-            return output_file
-
-        except Exception as e:
-            raise RuntimeError(
-                f"Export failed: {e}"
-            ) from e
-
-    # ------------------------------------------------------
-    # Reset Model
-    # ------------------------------------------------------
-    def reset(self):
-        """
-        Reset model state.
-        """
-        try:
-            self.model = RandomForestRegressor(
-                n_estimators=300,
-                max_depth=12,
-                min_samples_split=5,
-                min_samples_leaf=2,
-                random_state=self.random_state,
-                n_jobs=-1,
-            )
-
-            self.metrics = {}
-            self.feature_columns = []
-
-        except Exception as e:
-            raise RuntimeError(
-                f"Reset failed: {e}"
-            ) from e
-
-    # ------------------------------------------------------
-    # Model Exists
-    # ------------------------------------------------------
-    def model_exists(self):
-        """
-        Check whether a saved model exists.
-        """
-        return self.model_path.exists()
+            raise PredictionError(
+                "Forecast failed."
+            ) from error
 
 
 # ==========================================================
-# Convenience Function
+# MODULE HELPERS
 # ==========================================================
 
-def train_random_forest(
-    X,
-    y,
-    test_size: float = 0.20,
-):
+def load_prediction_model() -> StockPredictionModel:
     """
-    Train a Random Forest model in one call.
+    Create prediction model and
+    automatically load the saved model.
     """
-    try:
-        predictor = StockPredictionModel()
 
-        results = predictor.fit(
-            X,
-            y,
-            test_size=test_size,
-        )
+    model = StockPredictionModel()
 
-        return predictor, results
+    model.load()
 
-    except Exception as e:
-        raise RuntimeError(
-            f"Random Forest training failed: {e}"
-        ) from e
+    return model
+
+
+def train_prediction_model(
+    dataframe: pd.DataFrame,
+) -> StockPredictionModel:
+    """
+    Train and return a prediction model.
+    """
+
+    model = StockPredictionModel()
+
+    model.fit(dataframe)
+
+    return model
+
+
+def predict_dataframe(
+    dataframe: pd.DataFrame,
+) -> np.ndarray:
+    """
+    Quick prediction helper.
+    """
+
+    model = load_prediction_model()
+
+    model.ensure_model(dataframe)
+
+    return model.predict(dataframe)
+
+
+def predict_latest_price(
+    dataframe: pd.DataFrame,
+) -> float:
+    """
+    Predict latest price.
+    """
+
+    model = load_prediction_model()
+
+    model.ensure_model(dataframe)
+
+    return model.predict_latest(dataframe)
 
 
 # ==========================================================
-# Module Exports
+# VERSION
+# ==========================================================
+
+def version() -> str:
+    """
+    Return module version.
+    """
+
+    return VERSION
+
+
+# ==========================================================
+# MODULE EXPORTS
 # ==========================================================
 
 __all__ = [
+
+    "VERSION",
+
+    "MODEL_VERSION",
+
+    "MODEL_NAME",
+
+    "FEATURE_COLUMNS",
+
+    "PredictionConfig",
+
+    "PredictionError",
+
+    "ModelNotFoundError",
+
+    "FeatureMismatchError",
+
+    "TrainingError",
+
+    "PredictionValidationError",
+
     "StockPredictionModel",
-    "train_random_forest",
-]                
+
+    "load_prediction_model",
+
+    "train_prediction_model",
+
+    "predict_dataframe",
+
+    "predict_latest_price",
+
+    "model_exists",
+
+    "model_path",
+
+    "version",
+
+]
+
+# ==========================================================
+# END OF prediction.py
+# Version 3.0
+# ==========================================================

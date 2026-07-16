@@ -116,7 +116,13 @@ rf_model = None
 lstm_model = None
 
 try:
-    rf_model = joblib.load("models/random_forest.pkl")
+    from src.prediction import load_random_forest_model
+
+        try:
+            rf_model = load_random_forest_model()
+        except Exception:
+            rf_model = None
+
 except Exception:
     pass
 
@@ -938,10 +944,7 @@ with tab3:
 
             try:
 
-                predicted_price = float(
-                    rf_model.predict(input_df)[0]
-                )
-
+                predicted_price = rf_model.predict_single(input_df)
             except Exception as e:
 
                 st.error(f"Random Forest Error\n\n{e}")
