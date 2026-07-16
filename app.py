@@ -352,6 +352,7 @@ rsi = safe_value("RSI")
 
 macd = safe_value("MACD")
 macd_signal = safe_value("MACD_SIGNAL")
+macd_diff = safe_value("MACD_DIFF")
 
 adx = safe_value("ADX")
 
