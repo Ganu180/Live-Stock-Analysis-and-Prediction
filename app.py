@@ -794,6 +794,7 @@ with tab2:
             "RSI",
             "MACD",
             "MACD Signal",
+            "MACD Diff",
             "ADX"
         ],
 
@@ -808,6 +809,8 @@ with tab2:
             macd,
 
             macd_signal,
+
+            macd_diff,
 
             adx
 
@@ -865,15 +868,21 @@ with tab3:
     # ------------------------------------------------------
 
     feature_names = [
-        "Open",
-        "High",
-        "Low",
-        "Volume",
-        "SMA20",
-        "EMA20",
-        "RSI",
-        "MACD",
-        "ADX"
+            "Open",
+            "High",
+            "Low",
+            "Volume",
+            "SMA20",
+            "SMA50",
+            "EMA20",
+            "EMA50",
+            "RSI",
+            "MACD",
+            "MACD_SIGNAL",
+            "MACD_DIFF",
+            "ADX",
+            "ATR",
+            "OBV"
     ]
 
     features = {}
