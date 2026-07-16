@@ -118,10 +118,10 @@ lstm_model = None
 try:
     from src.prediction import load_random_forest_model
 
-        try:
-            rf_model = load_random_forest_model()
-        except Exception:
-            rf_model = None
+    try:
+        rf_model = load_random_forest_model()
+    except Exception:
+        rf_model = None
 
 except Exception:
     pass
